@@ -18,7 +18,7 @@ from panel.results_db import (
     upsert_master_card,
 )
 from panel.student_sync import SAFE_ACTION_LABELS, apply_student_sync_plan, build_student_sync_plan
-from panel.trello_client import TrelloConfig, fetch_student_boards_read_only
+from panel.trello_client import TrelloConfig, fetch_paes_board_inventory_read_only, fetch_student_boards_read_only, _fetch_student_boards_cached
 from scripts.import_essay_scores import import_scores
 
 
@@ -84,14 +84,36 @@ def _render_trello_admin(config: TrelloConfig) -> None:
     col_a, col_b = st.columns(2)
     with col_a:
         if st.button("Actualizar alumnos desde Trello", use_container_width=True):
-            students = fetch_student_boards_read_only(config)
-            result = sync_student_board_registry(students)
-            write_audit_log(
-                "Actualizar administracion",
-                f"{result.get('active_count', 0)} alumno(s) activo(s), {result.get('new_count', 0)} nuevo(s), {result.get('archived_count', 0)} archivado(s).",
-                meta=result,
-            )
-            _rerun_after_success("Alumnos actualizados desde Trello.")
+            try:
+                with st.spinner("Leyendo boards PAES desde Trello..."):
+                    _fetch_student_boards_cached.cache_clear()
+                    inventory = fetch_paes_board_inventory_read_only(config)
+                    students = inventory.get("students") or []
+                    unknown = inventory.get("unknown") or []
+                    result = sync_student_board_registry(students)
+                detail = (
+                    f"{result.get('active_count', 0)} alumno(s) activo(s), "
+                    f"{len(result.get('new_board_ids') or [])} nuevo(s), "
+                    f"{len(result.get('archived_board_ids') or [])} archivado(s), "
+                    f"{len(unknown)} board(s) PAES no identificado(s)."
+                )
+                write_audit_log("Actualizar administracion", detail, meta={"result": result, "unknown": unknown})
+                st.session_state["server_admin_last_update"] = detail
+                if not students:
+                    st.warning(
+                        "Trello respondio correctamente, pero no se encontraron boards abiertos con nombre tipo 'PAES Nombre'. "
+                        "Revisa que el token pertenezca al usuario que ve esos boards y que no esten archivados."
+                    )
+                    if unknown:
+                        st.caption("Boards PAES no identificados: " + ", ".join(item.get("board_name", "") for item in unknown[:8]))
+                _rerun_after_success("Alumnos actualizados desde Trello.")
+            except Exception as exc:
+                message = f"Error al actualizar alumnos desde Trello: {exc}"
+                write_audit_log("Error actualizar administracion", message, status="error")
+                st.error(message)
+    last_update = st.session_state.get("server_admin_last_update")
+    if last_update:
+        st.caption(f"Ultima lectura Trello: {last_update}")
     with col_b:
         if st.button("Actualizar resultados Ensayos", use_container_width=True):
             imported, skipped, errors = import_scores(dry_run=False, delay=0.35, limit=None)
