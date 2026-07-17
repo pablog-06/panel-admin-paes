@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import time
 
 import streamlit as st
 
@@ -36,7 +37,7 @@ from panel.streamlit_shell import configure_page, hide_streamlit_chrome, render_
 from panel.trello_client import TrelloConfig
 
 
-APP_VERSION = "v-etapa6-sync-debug-2"
+APP_VERSION = "v-etapa6-loading-stable-1"
 LOCAL_API_PORT = 8771
 
 
@@ -85,9 +86,12 @@ def main() -> None:
         return
     if not require_local_encryption(APP_VERSION):
         return
-    loading = st.empty()
-    with loading:
-        render_loading_screen(APP_VERSION)
+    show_initial_loading = st.session_state.get("paes_board_ready_version") != APP_VERSION
+    loading = st.empty() if show_initial_loading else None
+    loading_started_at = time.perf_counter()
+    if loading is not None:
+        with loading:
+            render_loading_screen(APP_VERSION)
     try:
         initialize_database()
         ensure_master_defaults()
@@ -120,10 +124,16 @@ def main() -> None:
             )
             st.caption("No se hace ninguna llamada a Trello sin credenciales.")
     except Exception:
-        loading.empty()
+        if loading is not None:
+            loading.empty()
         raise
 
-    loading.empty()
+    if loading is not None:
+        remaining = 2.0 - (time.perf_counter() - loading_started_at)
+        if remaining > 0:
+            time.sleep(remaining)
+        loading.empty()
+        st.session_state["paes_board_ready_version"] = APP_VERSION
     visual_action_results = st.session_state.setdefault("visual_action_results", {})
     if component_action_mode:
         try:
