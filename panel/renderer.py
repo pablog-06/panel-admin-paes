@@ -3198,7 +3198,7 @@ def build_html_document(
 
     async function openVisibilityModal(contentType, contentId, title) {
         if (!TRELLO_MODE) {
-            alert("Este filtro se guarda en la base local del panel.");
+            alert("En modo VM seguro, usa Panel servidor seguro > Visibilidad para ocultar o mostrar contenido por alumno.");
             return;
         }
         activeVisibilityTarget = { contentType, contentId, title };

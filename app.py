@@ -5,7 +5,9 @@ import os
 
 import streamlit as st
 
+import panel.admin_actions as _admin_actions
 import panel.auth as _auth
+import panel.bridge_component as _bridge_component
 import panel.assets_cache as _assets_cache
 import panel.icons as _icons
 import panel.local_api as _local_api
@@ -18,7 +20,9 @@ import panel.student_sync as _student_sync
 import panel.streamlit_shell as _streamlit_shell
 import panel.trello_client as _trello_client
 
+_admin_actions = importlib.reload(_admin_actions)
 _auth = importlib.reload(_auth)
+_bridge_component = importlib.reload(_bridge_component)
 _assets_cache = importlib.reload(_assets_cache)
 _icons = importlib.reload(_icons)
 _results_db = importlib.reload(_results_db)
@@ -31,7 +35,9 @@ _security_gate = importlib.reload(_security_gate)
 _server_admin = importlib.reload(_server_admin)
 _streamlit_shell = importlib.reload(_streamlit_shell)
 
+from panel.admin_actions import execute_admin_action
 from panel.auth import require_login
+from panel.bridge_component import render_bridge_component
 from panel.local_api import ensure_local_api
 from panel.master_import import bootstrap_master_if_empty
 from panel.renderer import build_html_document
@@ -48,7 +54,7 @@ from panel.streamlit_shell import configure_page, hide_streamlit_chrome, render_
 from panel.trello_client import TrelloConfig
 
 
-APP_VERSION = "v-etapa6-server-admin-1"
+APP_VERSION = "v-etapa6-ui-bridge-1"
 LOCAL_API_PORT = 8771
 
 
@@ -91,6 +97,7 @@ def main() -> None:
     config = trello_config()
     disable_local_api = _bool_secret_or_env("DISABLE_LOCAL_API", False)
     server_admin_enabled = _bool_secret_or_env("SERVER_ADMIN_NATIVE", True)
+    server_ui_bridge_enabled = _bool_secret_or_env("SERVER_UI_BRIDGE", True)
     if config.is_complete and not disable_local_api:
         ensure_local_api(config, port=LOCAL_API_PORT)
     user = require_login(APP_VERSION)
@@ -122,10 +129,12 @@ def main() -> None:
             local_api_endpoint = ensure_local_api(config, port=LOCAL_API_PORT)
             trello_api_base, _, trello_api_token = local_api_endpoint.partition("|")
         elif config.is_complete and disable_local_api:
+            if server_ui_bridge_enabled:
+                trello_api_base = "streamlit-bridge"
+                trello_api_token = "server-side"
             st.info(
-                "Modo seguro VM activo: se cargan datos del servidor y se desactiva "
-                "la API local de edicion/sincronizacion para mantener acceso "
-                "multi-dispositivo sin API publica de escritura."
+                "Modo seguro VM activo: las acciones de la UI se envian a Python mediante "
+                "bridge interno de Streamlit, sin API publica de escritura."
             )
         else:
             st.warning(
@@ -140,18 +149,32 @@ def main() -> None:
 
     loading.empty()
     render_server_admin_panel(config, enabled=server_admin_enabled)
-    render_component(
-        build_html_document(
-            board_lists,
-            board_title=board_title,
-            subtitle=subtitle,
-            read_only=read_only,
-            version=APP_VERSION,
-            trello_api_base=trello_api_base,
-            trello_api_token=trello_api_token,
-        ),
+    html_document = build_html_document(
+        board_lists,
+        board_title=board_title,
+        subtitle=subtitle,
+        read_only=read_only,
         version=APP_VERSION,
+        trello_api_base=trello_api_base,
+        trello_api_token=trello_api_token,
     )
+    if disable_local_api and server_ui_bridge_enabled and config.is_complete:
+        action = render_bridge_component(html_document, height=1080, key="admin_paes_board_bridge")
+        if action:
+            action_id = str(action.get("id") or "")
+            if action_id and st.session_state.get("last_bridge_action_id") != action_id:
+                st.session_state["last_bridge_action_id"] = action_id
+                try:
+                    execute_admin_action(str(action.get("path") or ""), action.get("payload") or {}, config)
+                    st.cache_data.clear()
+                    st.rerun()
+                except Exception as exc:
+                    st.session_state["last_bridge_error"] = str(exc)
+                    st.rerun()
+    else:
+        render_component(html_document, version=APP_VERSION)
+    if st.session_state.get("last_bridge_error"):
+        st.error(st.session_state.pop("last_bridge_error"))
 
 
 if __name__ == "__main__":

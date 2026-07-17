@@ -227,7 +227,7 @@ def _render_content_editor(config: TrelloConfig) -> None:
 
 def _render_visibility(config: TrelloConfig) -> None:
     st.subheader("Visibilidad por alumno")
-    st.caption("Oculta o muestra contenido maestro por alumno. Al sincronizar, no toca Ensayos.")
+    st.caption("Por defecto todos reciben el contenido. Desmarca alumnos para ocultarlo al sincronizar. Ensayos no se toca.")
     lists = _current_lists()
     content_options: dict[str, dict[str, str]] = {}
     for item in lists:
@@ -256,16 +256,61 @@ def _render_visibility(config: TrelloConfig) -> None:
     selected = content_options[selected_key]
     hidden_result = _safe_action(config, "/visibility-get", selected)
     hidden_ids = set(hidden_result.get("hidden_student_ids") or [])
-    student_labels = {f"{item.get('initials') or '?'} - {item.get('student_name') or item.get('board_name')}": item for item in students}
-    default_hidden = [label for label, item in student_labels.items() if item.get("board_id") in hidden_ids]
-    hidden_labels = st.multiselect(
-        "Alumnos sin acceso a este contenido",
-        list(student_labels.keys()),
-        default=default_hidden,
-        help="Por defecto todos tienen acceso. Selecciona solo quienes NO deben verlo.",
-    )
-    if st.button("Guardar visibilidad", use_container_width=True):
-        hidden_board_ids = [student_labels[label]["board_id"] for label in hidden_labels]
+
+    search = st.text_input("Buscar alumno", placeholder="Nombre o iniciales", key=f"visibility_search_{selected['content_type']}_{selected['content_id']}")
+    query = search.strip().casefold()
+    visible_students = [
+        item for item in students
+        if not query
+        or query in str(item.get("student_name") or "").casefold()
+        or query in str(item.get("initials") or "").casefold()
+        or query in str(item.get("board_name") or "").casefold()
+    ]
+
+    left, right = st.columns(2)
+    with left:
+        if st.button("Mostrar a todos", use_container_width=True):
+            for student in students:
+                st.session_state[f"vis_{selected['content_type']}_{selected['content_id']}_{student['board_id']}"] = True
+            st.rerun()
+    with right:
+        if st.button("Ocultar a todos", use_container_width=True):
+            for student in students:
+                st.session_state[f"vis_{selected['content_type']}_{selected['content_id']}_{student['board_id']}"] = False
+            st.rerun()
+
+    st.caption(f"Mostrando {len(visible_students)} de {len(students)} alumnos activos.")
+    cols = st.columns(4)
+    visible_state: dict[str, bool] = {}
+    for index, student in enumerate(visible_students):
+        board_id = str(student.get("board_id") or "")
+        name = str(student.get("student_name") or student.get("board_name") or board_id)
+        initials = str(student.get("initials") or "?")
+        key = f"vis_{selected['content_type']}_{selected['content_id']}_{board_id}"
+        default_value = board_id not in hidden_ids
+        if key not in st.session_state:
+            st.session_state[key] = default_value
+        with cols[index % 4]:
+            visible_state[board_id] = st.checkbox(
+                f"{initials} ? {name}",
+                value=bool(st.session_state[key]),
+                key=key,
+                help=name,
+            )
+
+    all_hidden_ids: set[str] = set()
+    for student in students:
+        board_id = str(student.get("board_id") or "")
+        key = f"vis_{selected['content_type']}_{selected['content_id']}_{board_id}"
+        if key in st.session_state:
+            is_visible = bool(st.session_state[key])
+        else:
+            is_visible = board_id not in hidden_ids
+        if not is_visible:
+            all_hidden_ids.add(board_id)
+
+    st.info(f"{len(students) - len(all_hidden_ids)}/{len(students)} alumnos recibiran este contenido.")
+    if st.button("Guardar visibilidad", type="primary", use_container_width=True):
         try:
             _safe_action(
                 config,
@@ -273,11 +318,11 @@ def _render_visibility(config: TrelloConfig) -> None:
                 {
                     **selected,
                     "students": students,
-                    "hidden_student_ids": hidden_board_ids,
+                    "hidden_student_ids": sorted(all_hidden_ids),
                     "content_title": selected_key,
                 },
             )
-            _rerun_after_success("Visibilidad guardada.")
+            _rerun_after_success("Visibilidad guardada. Revisa Sincronizacion > Vista previa para aplicar el cambio en Trello.")
         except Exception as exc:
             st.error(str(exc))
 

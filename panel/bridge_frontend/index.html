@@ -1,0 +1,108 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <style>
+    html, body, #root { margin: 0; padding: 0; width: 100%; min-height: 100%; overflow: hidden; }
+    iframe { display: block; width: 100%; height: 1080px; border: 0; }
+  </style>
+</head>
+<body>
+  <div id="root"></div>
+  <script>
+    let lastActionKey = "";
+
+    function send(type, payload) {
+      window.parent.postMessage({ isStreamlitMessage: true, type, ...payload }, "*");
+    }
+
+    function setFrameHeight(height) {
+      send("streamlit:setFrameHeight", { height: height || 1080 });
+    }
+
+    function setComponentValue(value) {
+      send("streamlit:setComponentValue", { value, dataType: "json" });
+    }
+
+    function bridgeScript() {
+      return `
+        <script>
+          (function () {
+            const originalFetch = window.fetch.bind(window);
+            function bridgeResponse(path, payload) {
+              const action = {
+                id: Date.now().toString(36) + Math.random().toString(36).slice(2),
+                path: path,
+                payload: payload || {}
+              };
+              window.parent.postMessage({ type: "admin-paes-action", action }, "*");
+              const result = fakeResult(path, payload || {});
+              return Promise.resolve({
+                ok: true,
+                status: 200,
+                json: () => Promise.resolve({ ok: true, result })
+              });
+            }
+            function fakeResult(path, payload) {
+              if (path === "/create-list") {
+                return { id: "pending-list-" + Date.now(), name: payload.name || "Lista", pos: Date.now() };
+              }
+              if (path === "/save-card") {
+                return { card_id: payload.card_id || payload.id || ("pending-card-" + Date.now()) };
+              }
+              if (path === "/student-boards") return { students: [] };
+              if (path === "/visibility-get") return { hidden_student_ids: [] };
+              if (path === "/sync-preview-students") return { students: 0, actions: [], errors: [], summary: {} };
+              if (path === "/sync-start-students") return { job_id: "server-panel-required", status: "queued" };
+              if (path === "/sync-status") return { status: "done", note: "Usa Panel servidor seguro > Sincronizacion para progreso real." };
+              return {};
+            }
+            window.fetch = function(url, options) {
+              const raw = String(url || "");
+              if (raw.startsWith("streamlit-bridge")) {
+                let path = raw.replace(/^streamlit-bridge/, "") || "/";
+                if (!path.startsWith("/")) path = "/" + path;
+                let payload = {};
+                try { payload = JSON.parse((options && options.body) || "{}"); } catch (error) { payload = {}; }
+                return bridgeResponse(path, payload);
+              }
+              return originalFetch(url, options);
+            };
+          })();
+        <\/script>
+      `;
+    }
+
+    function render(args) {
+      const html = String(args.html || "");
+      const height = Number(args.height || 1080);
+      const root = document.getElementById("root");
+      root.innerHTML = "";
+      const iframe = document.createElement("iframe");
+      iframe.setAttribute("sandbox", "allow-scripts allow-same-origin allow-forms allow-popups allow-downloads");
+      iframe.srcdoc = html.replace("<head>", "<head>" + bridgeScript());
+      iframe.style.height = height + "px";
+      root.appendChild(iframe);
+      setFrameHeight(height);
+    }
+
+    window.addEventListener("message", (event) => {
+      const data = event.data || {};
+      if (data.type === "streamlit:render") {
+        render(data.args || {});
+        return;
+      }
+      if (data.type === "admin-paes-action" && data.action) {
+        const key = JSON.stringify(data.action);
+        if (key === lastActionKey) return;
+        lastActionKey = key;
+        setComponentValue(data.action);
+      }
+    });
+
+    send("streamlit:componentReady", { apiVersion: 1 });
+    setFrameHeight(1080);
+  </script>
+</body>
+</html>
