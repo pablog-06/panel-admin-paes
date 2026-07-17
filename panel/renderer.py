@@ -2519,7 +2519,7 @@ def build_html_document(
     const TRELLO_API_BASE = "__TRELLO_API_BASE__";
     const TRELLO_API_TOKEN = "__TRELLO_API_TOKEN__";
     const COMPONENT_MODE = TRELLO_API_BASE === "__STREAMLIT_COMPONENT__";
-    const COMPONENT_STATE = __COMPONENT_STATE_JSON__;
+    let COMPONENT_STATE = __COMPONENT_STATE_JSON__;
     const TRELLO_MODE = Boolean(TRELLO_API_BASE);
     const STORAGE_KEY = "admin-paes-board-state-v1";
     const AUDIT_STORAGE_KEY = "admin-paes-audit-events-v1";
@@ -2930,8 +2930,9 @@ def build_html_document(
                 action: { id: actionId, path, payload, ui_state: uiState },
             }, "*");
             setSaveStatus("Procesando en servidor", "saving");
-            if (cached && cached.ok) return cached.result;
-            if (cached && cached.error) throw new Error(cached.error);
+            const canUseCached = !path.startsWith("/sync-") && !(path === "/admin-dashboard" && payload?.refresh);
+            if (canUseCached && cached && cached.ok) return cached.result;
+            if (canUseCached && cached && cached.error) throw new Error(cached.error);
             return componentFallbackResult(path);
         }
         let response;
@@ -3182,7 +3183,9 @@ def build_html_document(
             setSaveStatus("Error sync", "error");
             renderSyncPlan({ students: 0, actions: [], errors: [{ error: error.message }] });
         } finally {
-            setSyncBusy(false);
+            if (!(COMPONENT_MODE && syncNote.textContent.includes("Sincronizacion enviada al servidor"))) {
+                setSyncBusy(false);
+            }
         }
     }
 
@@ -3199,15 +3202,18 @@ def build_html_document(
             syncNote.textContent = `Sincronizando boards... Esta ventana queda bloqueada hasta terminar.`;
             let result = null;
             try {
+                if (COMPONENT_MODE) {
+                    await callLocalApi("/sync-apply-students", {
+                        confirmation: syncConfirmation.value.trim(),
+                        max_actions: Math.max(total, 500),
+                    });
+                    syncNote.textContent = "Sincronizacion enviada al servidor. Espera el resultado en esta misma ventana.";
+                    return;
+                }
                 const started = await callLocalApi("/sync-start-students", {
                     confirmation: syncConfirmation.value.trim(),
                     max_actions: Math.max(total, 500),
                 });
-                if (COMPONENT_MODE) {
-                    renderSyncProgress({ ...started, status: started.status || "queued", progress: [] });
-                    syncNote.textContent = "Sincronizacion enviada al servidor. El progreso se actualizara automaticamente.";
-                    return;
-                }
                 const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
                 let job = started;
                 while (!["done", "error"].includes(job.status)) {
@@ -4608,15 +4614,15 @@ def build_html_document(
     document.addEventListener("pointercancel", stopCardDragging);
 
     hydrateBoardDomFromState();
-    function restoreComponentUiState() {
+    function applyComponentStateToOpenUi() {
         if (!COMPONENT_MODE) return;
         const ui = COMPONENT_STATE.__ui_state || {};
-        if (ui.screen === "admin") {
+        if (ui.screen === "admin" || adminPage.classList.contains("is-open")) {
             adminPage.classList.add("is-open");
             const cachedAdmin = COMPONENT_STATE["/admin-dashboard"];
             if (cachedAdmin?.ok) renderAdminDashboard(cachedAdmin.result);
         }
-        if (ui.screen === "sync") {
+        if (ui.screen === "sync" || syncDialog.classList.contains("is-open")) {
             syncBackdrop.classList.add("is-open");
             syncDialog.classList.add("is-open");
             const planResult = COMPONENT_STATE["/sync-preview-students"];
@@ -4625,33 +4631,31 @@ def build_html_document(
                 renderSyncPlan(latestSyncPlan);
                 syncNote.textContent = "Vista previa lista. Revisa el contenido antes de aplicar.";
             }
-            const startResult = COMPONENT_STATE["/sync-start-students"];
-            const statusResult = COMPONENT_STATE["/sync-status"];
-            const latestJob = statusResult?.ok ? statusResult.result : startResult?.ok ? startResult.result : null;
-            if (latestJob) {
-                renderSyncProgress(latestJob, latestSyncPlan);
-                const completed = latestJob.completed_boards || 0;
-                const totalBoards = latestJob.total_boards || 0;
-                const status = latestJob.status || "queued";
-                syncNote.textContent = status === "done"
-                    ? "Sincronizacion finalizada."
-                    : status === "error"
-                        ? `Error de sincronizacion: ${latestJob.note || latestJob.error || "revisa historial"}`
-                        : `Sincronizando boards... ${completed}/${totalBoards || "?"} completados.`;
-                setSyncBusy(!["done", "error"].includes(status), syncNote.textContent);
-                if (!["done", "error"].includes(status) && latestJob.job_id) {
-                    window.setTimeout(() => {
-                        callLocalApi("/sync-status", { job_id: latestJob.job_id }).catch((error) => {
-                            syncNote.textContent = error.message;
-                            setSyncBusy(false);
-                        });
-                    }, 1600);
-                }
+            const applyResult = COMPONENT_STATE["/sync-apply-students"];
+            if (applyResult?.ok) {
+                const result = applyResult.result || {};
+                renderSyncProgress({ progress: result.board_results || [], status: "done", result }, latestSyncPlan);
+                const planned = result.planned || latestSyncPlan?.actions?.length || 0;
+                const applied = result.applied || 0;
+                syncNote.textContent = `Sincronizacion lista: ${applied}/${planned} aplicado(s). Backups creados: ${(result.backups || []).length}.`;
+                setSyncBusy(false);
+                setSaveStatus("Sincronizado");
+            } else if (applyResult?.error) {
+                syncNote.textContent = applyResult.error;
+                setSyncBusy(false);
+                setSaveStatus("Error sync", "error");
             }
         }
     }
 
-    restoreComponentUiState();
+    window.addEventListener("message", (event) => {
+        const message = event.data || {};
+        if (message.source !== "admin-paes-component-state") return;
+        COMPONENT_STATE = message.state || {};
+        applyComponentStateToOpenUi();
+    });
+
+    applyComponentStateToOpenUi();
     renderAuditLog(localAuditEvents());
     setAuditDebug(`JS listo ${new Date().toLocaleTimeString("es-CL")}`);
     refreshAuditLog();

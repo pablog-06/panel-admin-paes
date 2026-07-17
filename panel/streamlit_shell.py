@@ -22,10 +22,22 @@ export default function(component) {
 
     const html = data?.html || '';
     const version = data?.version || '';
-    const marker = `${version}:${html.length}`;
+    const marker = `${version}:${data?.reload_key || 0}`;
     if (frame.dataset.marker !== marker) {
         frame.dataset.marker = marker;
         frame.srcdoc = html;
+    }
+
+    const sendState = () => {
+        if (!frame.contentWindow) return;
+        frame.contentWindow.postMessage({
+            source: 'admin-paes-component-state',
+            state: data?.state || {},
+        }, '*');
+    };
+    if (frame.contentWindow) {
+        window.setTimeout(sendState, 80);
+        window.setTimeout(sendState, 350);
     }
 
     const handler = (event) => {
@@ -190,10 +202,17 @@ def render_component(
     version: str = "v-etapa3-no-parent-nav-1",
     *,
     action_mode: bool = False,
+    component_state: dict | None = None,
+    reload_key: int = 0,
 ):
     if action_mode:
         return _board_action_component(
-            data={"html": html_document, "version": version},
+            data={
+                "html": html_document,
+                "version": version,
+                "state": component_state or {},
+                "reload_key": reload_key,
+            },
             key="paes-visual-board-actions",
             on_action_change=lambda: None,
             height=1080,

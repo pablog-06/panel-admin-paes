@@ -36,7 +36,7 @@ from panel.streamlit_shell import configure_page, hide_streamlit_chrome, render_
 from panel.trello_client import TrelloConfig
 
 
-APP_VERSION = "v-etapa6-visual-server-3"
+APP_VERSION = "v-etapa6-visual-server-4"
 LOCAL_API_PORT = 8771
 
 
@@ -147,6 +147,8 @@ def main() -> None:
         html_document,
         version=APP_VERSION,
         action_mode=component_action_mode,
+        component_state=visual_action_results,
+        reload_key=int(st.session_state.get("visual_reload_key", 0)),
     )
     action = getattr(component_result, "action", None) if component_result is not None else None
     if component_action_mode and isinstance(action, dict):
@@ -163,6 +165,8 @@ def main() -> None:
                 visual_action_results[path] = {"ok": True, "result": result}
                 if path in {"/create-list", "/save-card", "/move-list", "/move-card", "/archive-list", "/archive-card", "/visibility-save"}:
                     visual_action_results.pop("/sync-preview-students", None)
+                if path in {"/create-list", "/save-card", "/move-list", "/move-card", "/archive-list", "/archive-card"}:
+                    st.session_state["visual_reload_key"] = int(st.session_state.get("visual_reload_key", 0)) + 1
             except Exception as exc:
                 visual_action_results[path] = {"ok": False, "error": str(exc)}
                 st.session_state["last_visual_action_error"] = str(exc)
