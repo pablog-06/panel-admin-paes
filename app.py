@@ -37,7 +37,7 @@ from panel.streamlit_shell import configure_page, hide_streamlit_chrome, render_
 from panel.trello_client import TrelloConfig
 
 
-APP_VERSION = "v-etapa6-sync-count-load-2"
+APP_VERSION = "v-etapa6-results-ranking-1"
 LOCAL_API_PORT = 8771
 
 

@@ -1357,6 +1357,34 @@ def latest_exam_summary(db_path: Path = DB_PATH) -> dict[str, Any] | None:
     }
 
 
+def latest_exam_ranking(db_path: Path = DB_PATH) -> list[dict[str, Any]]:
+    initialize_database(db_path)
+    with database(db_path) as connection:
+        essay_rows = connection.execute(
+            """
+            SELECT essay_name
+            FROM essay_scores
+            GROUP BY essay_name
+            """
+        ).fetchall()
+        if not essay_rows:
+            return []
+        latest_exam = max((row["essay_name"] for row in essay_rows), key=essay_sort_key)
+        rows = connection.execute(
+            """
+            SELECT students.name_encrypted AS student_name_encrypted, essay_scores.score
+            FROM essay_scores
+            JOIN students ON students.id = essay_scores.student_id
+            WHERE essay_scores.essay_name = ?
+            ORDER BY essay_scores.score DESC, students.name_hash ASC
+            """,
+            (latest_exam,),
+        ).fetchall()
+    return [
+        {"student": _decrypt_student_name(row), "score": int(row["score"])}
+        for row in rows
+    ]
+
 def median_scores_by_exam(db_path: Path = DB_PATH) -> list[dict[str, Any]]:
     initialize_database(db_path)
     with database(db_path) as connection:
@@ -1391,6 +1419,7 @@ def median_scores_by_exam(db_path: Path = DB_PATH) -> list[dict[str, Any]]:
 def build_results_panel(db_path: Path = DB_PATH) -> dict[str, Any]:
     summary = latest_exam_summary(db_path)
     median_series = median_scores_by_exam(db_path)
+    ranking = latest_exam_ranking(db_path)
     if summary is None:
         stats = {
             "exam": "Ultimo ensayo",
@@ -1430,6 +1459,7 @@ def build_results_panel(db_path: Path = DB_PATH) -> dict[str, Any]:
         "kind": "locked",
         "stats": stats,
         "median_series": median_series,
+        "ranking": ranking,
         "note": note,
         "cards": [],
     }

@@ -85,11 +85,36 @@ def render_average_chart(points: list[dict[str, Any]]) -> str:
         </div>
     """
 
+def render_score_ranking(rows: list[dict[str, Any]], exam: str) -> str:
+    if not rows:
+        return """
+            <div class="score-ranking" data-ranking="latest-exam">
+                <div class="ranking-title">Ranking del ultimo ensayo</div>
+                <div class="ranking-empty">Sin puntajes disponibles para ordenar.</div>
+            </div>
+        """
+    row_html = "\n".join(
+        f"""
+        <div class="ranking-row">
+            <span class="ranking-name" title="{escape_text(row.get('student', 'Estudiante'))}">{escape_text(row.get('student', 'Estudiante'))}</span>
+            <strong class="ranking-score">{escape_text(row.get('score', '--'))}</strong>
+        </div>
+        """
+        for row in rows
+    )
+    return f"""
+        <div class="score-ranking" data-ranking="latest-exam">
+            <div class="ranking-title">Ranking {escape_text(exam)}</div>
+            <div class="ranking-head"><span>Nombre</span><span>Puntaje</span></div>
+            <div class="ranking-list">{row_html}</div>
+        </div>
+    """
+
 def render_stats_panel(board_list: dict[str, Any]) -> str:
     stats = board_list["stats"]
     minimum = stats["min"]
     maximum = stats["max"]
-    average_chart = render_average_chart(board_list.get("median_series", []))
+    score_ranking = render_score_ranking(board_list.get("ranking", []), stats["exam"])
     return f"""
         <div class="stats-panel">
             <div class="panel-label">{icon("lock")} Agregado protegido</div>
@@ -111,7 +136,7 @@ def render_stats_panel(board_list: dict[str, Any]) -> str:
                     <small data-stat="max-student">{escape_text(maximum["student"])}</small>
                 </div>
             </div>
-            {average_chart}
+            {score_ranking}
             <p data-stat="note">{escape_text(board_list["note"])}</p>
         </div>
     """
@@ -1198,7 +1223,8 @@ def build_html_document(
         font-size: 11px;
     }
 
-    .average-chart {
+    .average-chart,
+    .score-ranking {
         margin-top: 12px;
         padding: 10px;
         border: 1px solid rgba(190,225,238,.72);
@@ -1206,13 +1232,73 @@ def build_html_document(
         background: rgba(244,251,255,.74);
     }
 
-    .chart-title {
+    .chart-title,
+    .ranking-title {
         margin-bottom: 6px;
         color: #24445c;
         font-size: 12px;
         font-weight: 540;
     }
 
+    .ranking-head,
+    .ranking-row {
+        display: grid;
+        grid-template-columns: minmax(0, 1fr) 58px;
+        gap: 8px;
+        align-items: center;
+    }
+
+    .ranking-head {
+        padding: 0 4px 6px;
+        color: var(--tertiary);
+        font-size: 10.5px;
+        font-weight: 420;
+    }
+
+    .ranking-head span:last-child,
+    .ranking-score {
+        text-align: right;
+    }
+
+    .ranking-list {
+        display: grid;
+        gap: 5px;
+        max-height: 190px;
+        overflow-y: auto;
+        padding-right: 2px;
+    }
+
+    .ranking-row {
+        padding: 7px 8px;
+        border: 1px solid rgba(207,231,240,.72);
+        border-radius: 11px;
+        background: rgba(255,255,255,.72);
+    }
+
+    .ranking-name {
+        min-width: 0;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+        color: #24445c;
+        font-size: 12px;
+        font-weight: 420;
+    }
+
+    .ranking-score {
+        color: #162d42;
+        font-size: 13px;
+        font-weight: 560;
+    }
+
+    .ranking-empty {
+        min-height: 70px;
+        display: grid;
+        place-items: center;
+        color: var(--secondary);
+        font-size: 12px;
+        text-align: center;
+    }
     .average-chart svg {
         width: 100%;
         height: auto;
@@ -3581,10 +3667,35 @@ def build_html_document(
             const target = root.querySelector(`[data-stat="${key}"]`);
             if (target && value !== undefined) target.textContent = value;
         });
-        const chart = root.querySelector('[data-chart="average-series"]');
-        if (chart) {
-            chart.outerHTML = renderAverageChart(panel.median_series || []);
+        const ranking = root.querySelector('[data-ranking="latest-exam"]');
+        if (ranking) {
+            ranking.outerHTML = renderScoreRanking(panel.ranking || [], stats.exam || "Ultimo ensayo");
         }
+    }
+
+    function renderScoreRanking(rows, exam) {
+        const safeRows = Array.isArray(rows) ? rows : [];
+        if (!safeRows.length) {
+            return `
+                <div class="score-ranking" data-ranking="latest-exam">
+                    <div class="ranking-title">Ranking del ultimo ensayo</div>
+                    <div class="ranking-empty">Sin puntajes disponibles para ordenar.</div>
+                </div>
+            `;
+        }
+        const items = safeRows.map((row) => `
+            <div class="ranking-row">
+                <span class="ranking-name" title="${escapeHtml(row.student || "Estudiante")}">${escapeHtml(row.student || "Estudiante")}</span>
+                <strong class="ranking-score">${escapeHtml(row.score ?? "--")}</strong>
+            </div>
+        `).join("");
+        return `
+            <div class="score-ranking" data-ranking="latest-exam">
+                <div class="ranking-title">Ranking ${escapeHtml(exam || "ultimo ensayo")}</div>
+                <div class="ranking-head"><span>Nombre</span><span>Puntaje</span></div>
+                <div class="ranking-list">${items}</div>
+            </div>
+        `;
     }
 
     function renderAverageChart(points) {
