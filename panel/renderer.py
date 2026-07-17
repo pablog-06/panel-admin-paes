@@ -2901,10 +2901,10 @@ def build_html_document(
             return { events: localAuditEvents() };
         }
         if (path === "/student-boards") {
-            return { students: COMPONENT_STATE.students || [] };
+            return COMPONENT_STATE["/student-boards"]?.result || { students: [] };
         }
         if (path === "/visibility-get") {
-            return COMPONENT_STATE["/visibility-get"] || { hidden_student_ids: [] };
+            return COMPONENT_STATE["/visibility-get"]?.result || { hidden_student_ids: [], component_pending: true };
         }
         if (path === "/admin-dashboard") {
             return COMPONENT_STATE["/admin-dashboard"] || {};
@@ -2922,7 +2922,7 @@ def build_html_document(
         if (!TRELLO_MODE) return null;
         if (COMPONENT_MODE) {
             const cached = COMPONENT_STATE[path];
-            const canUseCached = (path === "/admin-dashboard" && !payload?.refresh) || path === "/cohort-status";
+            const canUseCached = (path === "/admin-dashboard" && !payload?.refresh) || path === "/cohort-status" || path === "/student-boards";
             if (canUseCached && cached && cached.ok) return cached.result;
             if (canUseCached && cached && cached.error) throw new Error(cached.error);
             const actionId = `${Date.now()}-${Math.random().toString(16).slice(2)}`;
@@ -4701,6 +4701,27 @@ def build_html_document(
             adminPage.classList.add("is-open");
             const cachedAdmin = COMPONENT_STATE["/admin-dashboard"];
             if (cachedAdmin?.ok) renderAdminDashboard(cachedAdmin.result);
+        }
+        if (ui.screen === "visibility" || visibilityDialog.classList.contains("is-open")) {
+            const studentsResult = COMPONENT_STATE["/student-boards"];
+            if (studentsResult?.ok) {
+                const incomingStudents = Array.isArray(studentsResult.result?.students) ? studentsResult.result.students : [];
+                if (incomingStudents.length || !studentBoards) {
+                    studentBoards = incomingStudents;
+                }
+            }
+            const visibilityResult = COMPONENT_STATE["/visibility-get"];
+            if (activeVisibilityTarget && visibilityResult?.ok) {
+                const result = visibilityResult.result || {};
+                const sameTarget = String(result.content_type || "") === activeVisibilityTarget.contentType
+                    && String(result.content_id || "") === activeVisibilityTarget.contentId;
+                if (sameTarget) {
+                    hiddenStudentIds = new Set(result.hidden_student_ids || []);
+                }
+            }
+            if (visibilityDialog.classList.contains("is-open")) {
+                renderStudentGrid();
+            }
         }
         if (ui.screen === "sync" || syncDialog.classList.contains("is-open")) {
             syncBackdrop.classList.add("is-open");

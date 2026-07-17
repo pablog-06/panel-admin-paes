@@ -37,7 +37,7 @@ from panel.streamlit_shell import configure_page, hide_streamlit_chrome, render_
 from panel.trello_client import TrelloConfig
 
 
-APP_VERSION = "v-etapa6-loading-stable-1"
+APP_VERSION = "v-etapa6-visibility-fix-1"
 LOCAL_API_PORT = 8771
 
 

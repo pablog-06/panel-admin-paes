@@ -285,7 +285,11 @@ def execute_admin_action(path: str, payload: dict[str, Any] | None, config: Trel
     if path == "/visibility-get":
         content_type = _payload_text(payload, "content_type")
         content_id = _payload_text(payload, "content_id")
-        return {"hidden_student_ids": sorted(hidden_student_board_ids(content_type, content_id))}
+        return {
+            "content_type": content_type,
+            "content_id": content_id,
+            "hidden_student_ids": sorted(hidden_student_board_ids(content_type, content_id)),
+        }
 
     if path == "/visibility-save":
         content_type = _payload_text(payload, "content_type")
