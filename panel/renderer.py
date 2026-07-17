@@ -2589,6 +2589,7 @@ def build_html_document(
     let syncBusy = false;
     let syncMode = "idle";
     let syncLastStateAt = Date.now();
+    let syncBusyStartedAt = 0;
     let syncStatusTimer = null;
     let syncActiveJobId = "";
 
@@ -2921,6 +2922,9 @@ def build_html_document(
         if (!TRELLO_MODE) return null;
         if (COMPONENT_MODE) {
             const cached = COMPONENT_STATE[path];
+            const canUseCached = (path === "/admin-dashboard" && !payload?.refresh) || path === "/cohort-status";
+            if (canUseCached && cached && cached.ok) return cached.result;
+            if (canUseCached && cached && cached.error) throw new Error(cached.error);
             const actionId = `${Date.now()}-${Math.random().toString(16).slice(2)}`;
             const uiState = path.startsWith("/sync-")
                 ? { screen: "sync" }
@@ -2933,10 +2937,7 @@ def build_html_document(
                 source: "admin-paes-component-action",
                 action: { id: actionId, path, payload, ui_state: uiState },
             }, "*");
-            setSaveStatus("Procesando en servidor", "saving");
-            const canUseCached = !path.startsWith("/sync-") && !(path === "/admin-dashboard" && payload?.refresh);
-            if (canUseCached && cached && cached.ok) return cached.result;
-            if (canUseCached && cached && cached.error) throw new Error(cached.error);
+            setSaveStatus(path.startsWith("/sync-") ? "Sincronizando" : "Procesando en servidor", "saving");
             return componentFallbackResult(path);
         }
         let response;
@@ -3058,7 +3059,7 @@ def build_html_document(
 
     function closeSyncModal() {
         if (syncBusy) {
-            const elapsed = Date.now() - syncLastStateAt;
+            const elapsed = Date.now() - (syncBusyStartedAt || syncLastStateAt);
             if (elapsed < 45000) {
                 syncNote.textContent = syncMode === "preview"
                     ? "Cargando vista previa... espera a que termine antes de cerrar."
@@ -3073,6 +3074,16 @@ def build_html_document(
         }
         syncBackdrop.classList.remove("is-open");
         syncDialog.classList.remove("is-open");
+        if (COMPONENT_MODE) {
+            window.parent.postMessage({
+                source: "admin-paes-component-action",
+                action: {
+                    id: `ui-${Date.now()}-${Math.random().toString(16).slice(2)}`,
+                    path: "/ui-state",
+                    payload: { screen: "board" },
+                },
+            }, "*");
+        }
     }
 
     function renderSyncPlan(plan) {
@@ -3191,8 +3202,14 @@ def build_html_document(
     }
 
     function setSyncBusy(isBusy, text = "") {
+        const wasBusy = syncBusy;
         syncBusy = isBusy;
-        if (isBusy) syncLastStateAt = Date.now();
+        if (isBusy) {
+            syncLastStateAt = Date.now();
+            if (!wasBusy) syncBusyStartedAt = Date.now();
+        } else {
+            syncBusyStartedAt = 0;
+        }
         previewSyncButton.disabled = isBusy;
         applySyncButton.disabled = isBusy;
         document.querySelector("#close-sync").disabled = false;

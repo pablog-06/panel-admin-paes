@@ -22,6 +22,7 @@ export default function(component) {
 
     const html = data?.html || '';
     const version = data?.version || '';
+    const stateRev = data?.state_rev || 0;
     const marker = `${version}:${data?.reload_key || 0}`;
     if (frame.dataset.marker !== marker) {
         frame.dataset.marker = marker;
@@ -33,11 +34,14 @@ export default function(component) {
         frame.contentWindow.postMessage({
             source: 'admin-paes-component-state',
             state: data?.state || {},
+            state_rev: stateRev,
         }, '*');
     };
     if (frame.contentWindow) {
         window.setTimeout(sendState, 80);
-        window.setTimeout(sendState, 350);
+        window.setTimeout(sendState, 250);
+        window.setTimeout(sendState, 700);
+        window.setTimeout(sendState, 1300);
     }
 
     const handler = (event) => {
@@ -204,6 +208,7 @@ def render_component(
     action_mode: bool = False,
     component_state: dict | None = None,
     reload_key: int = 0,
+    state_rev: int = 0,
 ):
     if action_mode:
         return _board_action_component(
@@ -212,6 +217,7 @@ def render_component(
                 "version": version,
                 "state": component_state or {},
                 "reload_key": reload_key,
+                "state_rev": state_rev,
             },
             key="paes-visual-board-actions",
             on_action_change=lambda: None,

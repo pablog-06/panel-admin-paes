@@ -36,7 +36,7 @@ from panel.streamlit_shell import configure_page, hide_streamlit_chrome, render_
 from panel.trello_client import TrelloConfig
 
 
-APP_VERSION = "v-etapa6-sync-feedback-1"
+APP_VERSION = "v-etapa6-sync-debug-2"
 LOCAL_API_PORT = 8771
 
 
@@ -149,6 +149,7 @@ def main() -> None:
         action_mode=component_action_mode,
         component_state=visual_action_results,
         reload_key=int(st.session_state.get("visual_reload_key", 0)),
+        state_rev=int(st.session_state.get("visual_state_rev", 0)),
     )
     action = getattr(component_result, "action", None) if component_result is not None else None
     if component_action_mode and isinstance(action, dict):
@@ -158,28 +159,50 @@ def main() -> None:
         if action_id and path and st.session_state.get("last_visual_action_id") != action_id:
             st.session_state["last_visual_action_id"] = action_id
             ui_state = action.get("ui_state") if isinstance(action.get("ui_state"), dict) else {}
+            board_mutation_paths = {"/create-list", "/save-card", "/move-list", "/move-card", "/archive-list", "/archive-card"}
             if ui_state:
                 visual_action_results["__ui_state"] = ui_state
+            elif path in board_mutation_paths:
+                visual_action_results.pop("__ui_state", None)
             try:
-                if path == "/sync-preview-students":
+                if path == "/ui-state":
+                    screen = str(payload.get("screen") or "").strip()
+                    if screen in {"sync", "admin", "visibility"}:
+                        visual_action_results["__ui_state"] = {"screen": screen}
+                    else:
+                        visual_action_results.pop("__ui_state", None)
+                    result = {"screen": screen or "board"}
+                    visual_action_results[path] = {"ok": True, "result": result}
+                elif path == "/sync-preview-students":
                     visual_action_results.pop("/sync-start-students", None)
                     visual_action_results.pop("/sync-status", None)
                     visual_action_results.pop("/sync-apply-students", None)
-                if path == "/sync-start-students":
+                    result = execute_admin_action(path, payload, config)
+                    visual_action_results[path] = {"ok": True, "result": result}
+                elif path == "/sync-start-students":
                     visual_action_results.pop("/sync-status", None)
                     visual_action_results.pop("/sync-apply-students", None)
-                result = execute_admin_action(path, payload, config)
-                visual_action_results[path] = {"ok": True, "result": result}
-                if path in {"/create-list", "/save-card", "/move-list", "/move-card", "/archive-list", "/archive-card", "/visibility-save"}:
+                    result = execute_admin_action(path, payload, config)
+                    visual_action_results[path] = {"ok": True, "result": result}
+                else:
+                    result = execute_admin_action(path, payload, config)
+                    visual_action_results[path] = {"ok": True, "result": result}
+                if path in board_mutation_paths | {"/visibility-save"}:
                     visual_action_results.pop("/sync-preview-students", None)
                     visual_action_results.pop("/sync-start-students", None)
                     visual_action_results.pop("/sync-status", None)
                     visual_action_results.pop("/sync-apply-students", None)
-                if path in {"/create-list", "/save-card", "/move-list", "/move-card", "/archive-list", "/archive-card"}:
+                    if path in board_mutation_paths:
+                        visual_action_results.pop("__ui_state", None)
+                if path in board_mutation_paths:
                     st.session_state["visual_reload_key"] = int(st.session_state.get("visual_reload_key", 0)) + 1
             except Exception as exc:
                 visual_action_results[path] = {"ok": False, "error": str(exc)}
                 st.session_state["last_visual_action_error"] = str(exc)
+            finally:
+                st.session_state["visual_state_rev"] = int(st.session_state.get("visual_state_rev", 0)) + 1
+                visual_action_results["__state_rev"] = int(st.session_state["visual_state_rev"])
+                visual_action_results["__last_action"] = {"path": path, "id": action_id, "rev": int(st.session_state["visual_state_rev"])}
             st.rerun()
 
 
