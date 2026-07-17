@@ -2689,6 +2689,14 @@ def build_html_document(
 
     async function loadAdminDashboard(refresh = false) {
         if (!TRELLO_MODE) return;
+        if (COMPONENT_MODE && !refresh) {
+            const cached = COMPONENT_STATE["/admin-dashboard"];
+            if (cached?.ok) {
+                renderAdminDashboard(cached.result);
+                return cached.result;
+            }
+            if (cached?.error) throw new Error(cached.error);
+        }
         const data = await callLocalApi("/admin-dashboard", { refresh, limit: 80 });
         renderAdminDashboard(data);
         return data;
@@ -2910,9 +2918,16 @@ def build_html_document(
         if (COMPONENT_MODE) {
             const cached = COMPONENT_STATE[path];
             const actionId = `${Date.now()}-${Math.random().toString(16).slice(2)}`;
+            const uiState = path.startsWith("/sync-")
+                ? { screen: "sync" }
+                : path.startsWith("/admin-dashboard") || path.startsWith("/refresh-cohorts")
+                    ? { screen: "admin" }
+                    : path.startsWith("/visibility-") || path === "/student-boards"
+                        ? { screen: "visibility" }
+                        : {};
             window.parent.postMessage({
                 source: "admin-paes-component-action",
-                action: { id: actionId, path, payload },
+                action: { id: actionId, path, payload, ui_state: uiState },
             }, "*");
             setSaveStatus("Procesando en servidor", "saving");
             if (cached && cached.ok) return cached.result;
@@ -3188,6 +3203,11 @@ def build_html_document(
                     confirmation: syncConfirmation.value.trim(),
                     max_actions: Math.max(total, 500),
                 });
+                if (COMPONENT_MODE) {
+                    renderSyncProgress({ ...started, status: started.status || "queued", progress: [] });
+                    syncNote.textContent = "Sincronizacion enviada al servidor. El progreso se actualizara automaticamente.";
+                    return;
+                }
                 const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
                 let job = started;
                 while (!["done", "error"].includes(job.status)) {
@@ -4588,6 +4608,50 @@ def build_html_document(
     document.addEventListener("pointercancel", stopCardDragging);
 
     hydrateBoardDomFromState();
+    function restoreComponentUiState() {
+        if (!COMPONENT_MODE) return;
+        const ui = COMPONENT_STATE.__ui_state || {};
+        if (ui.screen === "admin") {
+            adminPage.classList.add("is-open");
+            const cachedAdmin = COMPONENT_STATE["/admin-dashboard"];
+            if (cachedAdmin?.ok) renderAdminDashboard(cachedAdmin.result);
+        }
+        if (ui.screen === "sync") {
+            syncBackdrop.classList.add("is-open");
+            syncDialog.classList.add("is-open");
+            const planResult = COMPONENT_STATE["/sync-preview-students"];
+            if (planResult?.ok) {
+                latestSyncPlan = planResult.result;
+                renderSyncPlan(latestSyncPlan);
+                syncNote.textContent = "Vista previa lista. Revisa el contenido antes de aplicar.";
+            }
+            const startResult = COMPONENT_STATE["/sync-start-students"];
+            const statusResult = COMPONENT_STATE["/sync-status"];
+            const latestJob = statusResult?.ok ? statusResult.result : startResult?.ok ? startResult.result : null;
+            if (latestJob) {
+                renderSyncProgress(latestJob, latestSyncPlan);
+                const completed = latestJob.completed_boards || 0;
+                const totalBoards = latestJob.total_boards || 0;
+                const status = latestJob.status || "queued";
+                syncNote.textContent = status === "done"
+                    ? "Sincronizacion finalizada."
+                    : status === "error"
+                        ? `Error de sincronizacion: ${latestJob.note || latestJob.error || "revisa historial"}`
+                        : `Sincronizando boards... ${completed}/${totalBoards || "?"} completados.`;
+                setSyncBusy(!["done", "error"].includes(status), syncNote.textContent);
+                if (!["done", "error"].includes(status) && latestJob.job_id) {
+                    window.setTimeout(() => {
+                        callLocalApi("/sync-status", { job_id: latestJob.job_id }).catch((error) => {
+                            syncNote.textContent = error.message;
+                            setSyncBusy(false);
+                        });
+                    }, 1600);
+                }
+            }
+        }
+    }
+
+    restoreComponentUiState();
     renderAuditLog(localAuditEvents());
     setAuditDebug(`JS listo ${new Date().toLocaleTimeString("es-CL")}`);
     refreshAuditLog();

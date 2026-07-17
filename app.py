@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import importlib
 import os
 
 import streamlit as st
@@ -18,18 +17,6 @@ import panel.student_sync as _student_sync
 import panel.streamlit_shell as _streamlit_shell
 import panel.trello_client as _trello_client
 
-_admin_actions = importlib.reload(_admin_actions)
-_auth = importlib.reload(_auth)
-_assets_cache = importlib.reload(_assets_cache)
-_icons = importlib.reload(_icons)
-_results_db = importlib.reload(_results_db)
-_trello_client = importlib.reload(_trello_client)
-_student_sync = importlib.reload(_student_sync)
-_local_api = importlib.reload(_local_api)
-_master_import = importlib.reload(_master_import)
-_renderer = importlib.reload(_renderer)
-_security_gate = importlib.reload(_security_gate)
-_streamlit_shell = importlib.reload(_streamlit_shell)
 
 from panel.admin_actions import execute_admin_action
 from panel.audit import write_audit_log
@@ -49,7 +36,7 @@ from panel.streamlit_shell import configure_page, hide_streamlit_chrome, render_
 from panel.trello_client import TrelloConfig
 
 
-APP_VERSION = "v-etapa6-visual-server-2"
+APP_VERSION = "v-etapa6-visual-server-3"
 LOCAL_API_PORT = 8771
 
 
@@ -138,6 +125,14 @@ def main() -> None:
 
     loading.empty()
     visual_action_results = st.session_state.setdefault("visual_action_results", {})
+    if component_action_mode:
+        try:
+            visual_action_results["/admin-dashboard"] = {
+                "ok": True,
+                "result": execute_admin_action("/admin-dashboard", {"refresh": False, "limit": 80}, config),
+            }
+        except Exception as exc:
+            visual_action_results["/admin-dashboard"] = {"ok": False, "error": str(exc)}
     html_document = build_html_document(
         board_lists,
         board_title=board_title,
@@ -160,9 +155,14 @@ def main() -> None:
         payload = action.get("payload") if isinstance(action.get("payload"), dict) else {}
         if action_id and path and st.session_state.get("last_visual_action_id") != action_id:
             st.session_state["last_visual_action_id"] = action_id
+            ui_state = action.get("ui_state") if isinstance(action.get("ui_state"), dict) else {}
+            if ui_state:
+                visual_action_results["__ui_state"] = ui_state
             try:
                 result = execute_admin_action(path, payload, config)
                 visual_action_results[path] = {"ok": True, "result": result}
+                if path in {"/create-list", "/save-card", "/move-list", "/move-card", "/archive-list", "/archive-card", "/visibility-save"}:
+                    visual_action_results.pop("/sync-preview-students", None)
             except Exception as exc:
                 visual_action_results[path] = {"ok": False, "error": str(exc)}
                 st.session_state["last_visual_action_error"] = str(exc)
