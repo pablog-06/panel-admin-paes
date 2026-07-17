@@ -80,7 +80,7 @@
       const root = document.getElementById("root");
       root.innerHTML = "";
       const iframe = document.createElement("iframe");
-      iframe.setAttribute("sandbox", "allow-scripts allow-same-origin allow-forms allow-popups allow-downloads");
+      iframe.setAttribute("sandbox", "allow-scripts allow-same-origin allow-forms allow-popups allow-downloads allow-modals");
       iframe.srcdoc = html.replace("<head>", "<head>" + bridgeScript());
       iframe.style.height = height + "px";
       root.appendChild(iframe);
