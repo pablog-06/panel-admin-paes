@@ -654,9 +654,13 @@ def load_cohort_status(db_path: Path = DB_PATH) -> dict[str, Any]:
                 "updated_at": str(row["updated_at"] or ""),
             }
         )
+    active_count = sum(1 for item in students if item["status"] == "open")
+    archived_count = sum(1 for item in students if item["status"] == "archived")
     return {
-        "active": sum(1 for item in students if item["status"] == "open"),
-        "archived": sum(1 for item in students if item["status"] == "archived"),
+        "active": active_count,
+        "archived": archived_count,
+        "active_count": active_count,
+        "archived_count": archived_count,
         "students": students,
     }
 
