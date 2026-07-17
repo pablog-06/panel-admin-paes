@@ -36,7 +36,7 @@ from panel.streamlit_shell import configure_page, hide_streamlit_chrome, render_
 from panel.trello_client import TrelloConfig
 
 
-APP_VERSION = "v-etapa6-visual-server-4"
+APP_VERSION = "v-etapa6-visual-server-5"
 LOCAL_API_PORT = 8771
 
 
@@ -161,10 +161,20 @@ def main() -> None:
             if ui_state:
                 visual_action_results["__ui_state"] = ui_state
             try:
+                if path == "/sync-preview-students":
+                    visual_action_results.pop("/sync-start-students", None)
+                    visual_action_results.pop("/sync-status", None)
+                    visual_action_results.pop("/sync-apply-students", None)
+                if path == "/sync-start-students":
+                    visual_action_results.pop("/sync-status", None)
+                    visual_action_results.pop("/sync-apply-students", None)
                 result = execute_admin_action(path, payload, config)
                 visual_action_results[path] = {"ok": True, "result": result}
                 if path in {"/create-list", "/save-card", "/move-list", "/move-card", "/archive-list", "/archive-card", "/visibility-save"}:
                     visual_action_results.pop("/sync-preview-students", None)
+                    visual_action_results.pop("/sync-start-students", None)
+                    visual_action_results.pop("/sync-status", None)
+                    visual_action_results.pop("/sync-apply-students", None)
                 if path in {"/create-list", "/save-card", "/move-list", "/move-card", "/archive-list", "/archive-card"}:
                     st.session_state["visual_reload_key"] = int(st.session_state.get("visual_reload_key", 0)) + 1
             except Exception as exc:

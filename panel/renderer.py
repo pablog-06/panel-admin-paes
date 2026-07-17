@@ -2884,13 +2884,13 @@ def build_html_document(
 
     function componentFallbackResult(path) {
         if (path === "/sync-preview-students") {
-            return { students: [], actions: [], errors: [], summary: {}, component_pending: true };
+            return { component_pending: true, kind: "preview" };
         }
         if (path === "/sync-start-students") {
-            return { job_id: "component-pending", status: "queued", component_pending: true };
+            return { component_pending: true, kind: "start" };
         }
         if (path === "/sync-status") {
-            return { status: "queued", note: "Solicitud enviada al servidor. Actualiza progreso en unos segundos.", progress: [], component_pending: true };
+            return { component_pending: true, kind: "status", status: "queued", progress: [] };
         }
         if (path === "/audit-log") {
             return { events: localAuditEvents() };
@@ -3103,7 +3103,21 @@ def build_html_document(
         syncActionsList.innerHTML = shown + hiddenCount + errorRows;
     }
 
+    function updateSyncSummaryFromJob(job, plan = latestSyncPlan) {
+        const actions = plan?.actions || [];
+        const errors = [...(plan?.errors || []), ...(job?.result?.errors || []), ...(job?.errors || [])];
+        const progress = job?.progress || [];
+        const boardCount = plan?.students ?? job?.total_boards ?? progress.length ?? "--";
+        const changeCount = actions.length || job?.result?.planned || job?.result?.applied || "--";
+        syncSummary.innerHTML = `
+            <div><span>Alumnos</span><strong>${escapeHtml(boardCount)}</strong></div>
+            <div><span>Cambios</span><strong>${escapeHtml(changeCount)}</strong></div>
+            <div><span>Errores</span><strong>${escapeHtml(errors.length || "--")}</strong></div>
+        `;
+    }
+
     function renderSyncProgress(job, plan = latestSyncPlan) {
+        updateSyncSummaryFromJob(job, plan);
         const actions = plan?.actions || [];
         const boards = new Map();
         actions.forEach((action) => {
@@ -3174,6 +3188,10 @@ def build_html_document(
             setSaveStatus("Comparando", "saving");
             syncNote.textContent = "Leyendo boards PAES y buscando contenido nuevo pendiente...";
             latestSyncPlan = await callLocalApi("/sync-preview-students", {});
+            if (latestSyncPlan?.component_pending) {
+                syncNote.textContent = "Vista previa enviada al servidor. Espera unos segundos...";
+                return;
+            }
             renderSyncPlan(latestSyncPlan);
             syncNote.textContent = "Vista previa lista. Revisa el contenido nuevo antes de aplicar.";
             setSaveStatus("Plan listo");
@@ -3202,18 +3220,14 @@ def build_html_document(
             syncNote.textContent = `Sincronizando boards... Esta ventana queda bloqueada hasta terminar.`;
             let result = null;
             try {
-                if (COMPONENT_MODE) {
-                    await callLocalApi("/sync-apply-students", {
-                        confirmation: syncConfirmation.value.trim(),
-                        max_actions: Math.max(total, 500),
-                    });
-                    syncNote.textContent = "Sincronizacion enviada al servidor. Espera el resultado en esta misma ventana.";
-                    return;
-                }
                 const started = await callLocalApi("/sync-start-students", {
                     confirmation: syncConfirmation.value.trim(),
                     max_actions: Math.max(total, 500),
                 });
+                if (COMPONENT_MODE) {
+                    syncNote.textContent = "Sincronizacion iniciada en servidor. Se actualizaran los checks progresivamente.";
+                    return;
+                }
                 const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
                 let job = started;
                 while (!["done", "error"].includes(job.status)) {
@@ -3250,7 +3264,9 @@ def build_html_document(
             setSaveStatus("Error sync", "error");
             refreshAuditLog();
         } finally {
-            setSyncBusy(false);
+            if (!(COMPONENT_MODE && syncNote.textContent.includes("Sincronizacion iniciada en servidor"))) {
+                setSyncBusy(false);
+            }
         }
     }
 
@@ -4631,19 +4647,40 @@ def build_html_document(
                 renderSyncPlan(latestSyncPlan);
                 syncNote.textContent = "Vista previa lista. Revisa el contenido antes de aplicar.";
             }
-            const applyResult = COMPONENT_STATE["/sync-apply-students"];
-            if (applyResult?.ok) {
-                const result = applyResult.result || {};
-                renderSyncProgress({ progress: result.board_results || [], status: "done", result }, latestSyncPlan);
-                const planned = result.planned || latestSyncPlan?.actions?.length || 0;
-                const applied = result.applied || 0;
-                syncNote.textContent = `Sincronizacion lista: ${applied}/${planned} aplicado(s). Backups creados: ${(result.backups || []).length}.`;
-                setSyncBusy(false);
-                setSaveStatus("Sincronizado");
-            } else if (applyResult?.error) {
-                syncNote.textContent = applyResult.error;
-                setSyncBusy(false);
-                setSaveStatus("Error sync", "error");
+            const startResult = COMPONENT_STATE["/sync-start-students"];
+            const statusResult = COMPONENT_STATE["/sync-status"];
+            const latestJob = statusResult?.ok ? statusResult.result : startResult?.ok ? startResult.result : null;
+            if (latestJob) {
+                const finishedResult = latestJob.result || null;
+                const jobForRender = finishedResult
+                    ? { ...latestJob, progress: finishedResult.board_results || latestJob.progress || [] }
+                    : latestJob;
+                renderSyncProgress(jobForRender, latestSyncPlan);
+                const status = latestJob.status || "queued";
+                if (status === "done") {
+                    const planned = finishedResult?.planned || latestSyncPlan?.actions?.length || 0;
+                    const applied = finishedResult?.applied || 0;
+                    syncNote.textContent = `Sincronizacion lista: ${applied}/${planned} aplicado(s). Backups creados: ${(finishedResult?.backups || []).length}.`;
+                    setSyncBusy(false);
+                    setSaveStatus("Sincronizado");
+                } else if (status === "error") {
+                    syncNote.textContent = latestJob.note || latestJob.error || "Error de sincronizacion.";
+                    setSyncBusy(false);
+                    setSaveStatus("Error sync", "error");
+                } else {
+                    const completed = latestJob.completed_boards || 0;
+                    const totalBoards = latestJob.total_boards || latestSyncPlan?.students || 0;
+                    syncNote.textContent = `Sincronizando boards... ${completed}/${totalBoards || "?"} completados.`;
+                    setSyncBusy(true, syncNote.textContent);
+                    if (latestJob.job_id) {
+                        window.setTimeout(() => {
+                            callLocalApi("/sync-status", { job_id: latestJob.job_id }).catch((error) => {
+                                syncNote.textContent = error.message;
+                                setSyncBusy(false);
+                            });
+                        }, 1500);
+                    }
+                }
             }
         }
     }
