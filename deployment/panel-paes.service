@@ -1,0 +1,16 @@
+﻿[Unit]
+Description=Panel Admin PAES Streamlit
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=ubuntu
+WorkingDirectory=/opt/panel-admin-paes
+Environment=PYTHONUNBUFFERED=1
+ExecStart=/opt/panel-admin-paes/.venv/bin/python -m streamlit run app.py --server.address=0.0.0.0 --server.port=8501 --server.headless=true
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

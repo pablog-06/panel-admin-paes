@@ -1,4 +1,4 @@
-﻿# Panel PAES
+# Panel PAES
 
 Aplicacion Streamlit para administrar una fuente maestra local de material comun
 y sincronizar cambios hacia tableros PAES de alumnos. El tablero `ADMIN` ya no
@@ -259,10 +259,10 @@ Estas carpetas estan ignoradas por Git para evitar subir datos privados.
 
 Politica de retencion local:
 
-- Logs: `activity.jsonl.enc` rota al superar 5 MB.
-- Logs rotados: se conservan hasta 5 archivos (`activity.1.jsonl.enc` a `activity.5.jsonl.enc`).
-- Backups: se eliminan archivos con mas de 14 dias.
-- Backups: tambien se conserva como maximo los 80 archivos mas recientes.
+- Logs: `activity.jsonl.enc` rota al superar 1 MB.
+- Logs rotados: se conservan hasta 3 archivos (`activity.1.jsonl.enc` a `activity.3.jsonl.enc`).
+- Backups: se eliminan archivos con mas de 3 dias.
+- Backups: tambien se conserva como maximo los 12 archivos mas recientes.
 - Backups periodicos: se intentan cada 30 minutos mientras la app esta activa.
 
 ## Ejecutar en Windows PowerShell
@@ -322,7 +322,9 @@ La base SQLite local en Community Cloud debe considerarse estado temporal. Para
 un panel operativo con historial duradero, usa una base externa gratuita o un
 flujo de exportacion/importacion controlado.
 
-Consulta `DEPLOYMENT_STREAMLIT_CLOUD.md` para el checklist completo.
+Consulta DEPLOYMENT_STREAMLIT_CLOUD.md para el checklist completo.
+
+Para despliegue operativo con SQLite persistente en una VM barata de Google Cloud, consulta deployment/GOOGLE_CLOUD_VM_SQLITE.md.
 
 ## Nota tecnica
 
@@ -347,4 +349,7 @@ credenciales fuera del navegador.
 - `panel/trello_client.py`: cliente Trello con protecciones para no tocar `Ensayos`.
 - `scripts/import_essay_scores.py`: importador solo lectura de listas `Ensayos` en tableros `PAES <Alumno>`.
 - `scripts/generate_password_hashes.py`: generador local de hashes para usuarios del login.
+
+
+
 

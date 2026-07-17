@@ -16,3 +16,4 @@ data/*.sqlite-*
 data/*.db-*
 assets/synced_trello_images/
 assets/synced_trello_files/
+exports/

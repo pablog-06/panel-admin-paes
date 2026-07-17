@@ -1,4 +1,4 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 import json
 from datetime import datetime, timedelta, timezone
@@ -15,10 +15,10 @@ BACKUP_DIR = DATA_DIR / "backups"
 LOG_DIR = DATA_DIR / "logs"
 AUDIT_LOG_PATH = LOG_DIR / "activity.jsonl"
 ENCRYPTED_AUDIT_LOG_PATH = LOG_DIR / "activity.jsonl.enc"
-MAX_LOG_BYTES = 5 * 1024 * 1024
-MAX_ROTATED_LOGS = 5
-BACKUP_RETENTION_DAYS = 14
-MAX_BACKUP_FILES = 80
+MAX_LOG_BYTES = 1 * 1024 * 1024
+MAX_ROTATED_LOGS = 3
+BACKUP_RETENTION_DAYS = 3
+MAX_BACKUP_FILES = 12
 
 
 def utc_timestamp() -> str:
@@ -69,12 +69,18 @@ def migrate_plain_audit_log_to_encrypted() -> None:
     AUDIT_LOG_PATH.unlink(missing_ok=True)
 
 
-def prune_backups() -> None:
-    ensure_audit_dirs()
-    backup_files = [
+def _backup_files() -> list[Path]:
+    if not BACKUP_DIR.exists():
+        return []
+    return [
         item for item in BACKUP_DIR.iterdir()
         if item.is_file() and item.suffix.lower() in {".json", ".sqlite", ".sqlite3", ".db", ".enc"}
     ]
+
+
+def prune_backups() -> None:
+    ensure_audit_dirs()
+    backup_files = _backup_files()
     if not backup_files:
         return
 
@@ -85,14 +91,7 @@ def prune_backups() -> None:
         if modified < cutoff:
             item.unlink(missing_ok=True)
 
-    remaining = sorted(
-        [
-            item for item in BACKUP_DIR.iterdir()
-            if item.is_file() and item.suffix.lower() in {".json", ".sqlite", ".sqlite3", ".db", ".enc"}
-        ],
-        key=lambda path: path.stat().st_mtime,
-        reverse=True,
-    )
+    remaining = sorted(_backup_files(), key=lambda path: path.stat().st_mtime, reverse=True)
     for item in remaining[MAX_BACKUP_FILES:]:
         item.unlink(missing_ok=True)
 
