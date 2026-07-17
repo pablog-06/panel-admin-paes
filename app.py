@@ -1,4 +1,4 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 import importlib
 import os
@@ -13,6 +13,7 @@ import panel.master_import as _master_import
 import panel.renderer as _renderer
 import panel.results_db as _results_db
 import panel.security_gate as _security_gate
+import panel.server_admin as _server_admin
 import panel.student_sync as _student_sync
 import panel.streamlit_shell as _streamlit_shell
 import panel.trello_client as _trello_client
@@ -27,6 +28,7 @@ _local_api = importlib.reload(_local_api)
 _master_import = importlib.reload(_master_import)
 _renderer = importlib.reload(_renderer)
 _security_gate = importlib.reload(_security_gate)
+_server_admin = importlib.reload(_server_admin)
 _streamlit_shell = importlib.reload(_streamlit_shell)
 
 from panel.auth import require_login
@@ -41,11 +43,12 @@ from panel.results_db import (
     migrate_queued_content_to_master,
 )
 from panel.security_gate import require_local_encryption
+from panel.server_admin import render_server_admin_panel
 from panel.streamlit_shell import configure_page, hide_streamlit_chrome, render_component, render_loading_screen
 from panel.trello_client import TrelloConfig
 
 
-APP_VERSION = "v-etapa6-cloud-prep-1"
+APP_VERSION = "v-etapa6-server-admin-1"
 LOCAL_API_PORT = 8771
 
 
@@ -61,7 +64,7 @@ def _bool_secret_or_env(name: str, default: bool = False) -> bool:
     value = _secret_or_env(name)
     if not value:
         return default
-    return value.lower() in {"1", "true", "yes", "on", "si", "sí"}
+    return value.lower() in {"1", "true", "yes", "on", "si", "sÃ­"}
 
 
 def trello_config() -> TrelloConfig:
@@ -87,6 +90,7 @@ def main() -> None:
     hide_streamlit_chrome()
     config = trello_config()
     disable_local_api = _bool_secret_or_env("DISABLE_LOCAL_API", False)
+    server_admin_enabled = _bool_secret_or_env("SERVER_ADMIN_NATIVE", True)
     if config.is_complete and not disable_local_api:
         ensure_local_api(config, port=LOCAL_API_PORT)
     user = require_login(APP_VERSION)
@@ -119,9 +123,9 @@ def main() -> None:
             trello_api_base, _, trello_api_token = local_api_endpoint.partition("|")
         elif config.is_complete and disable_local_api:
             st.info(
-                "Modo Cloud seguro activo: se cargan datos del servidor, pero se desactiva "
-                "la API local de edicion/sincronizacion porque no es compatible con "
-                "Streamlit Community Cloud."
+                "Modo seguro VM activo: se cargan datos del servidor y se desactiva "
+                "la API local de edicion/sincronizacion para mantener acceso "
+                "multi-dispositivo sin API publica de escritura."
             )
         else:
             st.warning(
@@ -135,6 +139,7 @@ def main() -> None:
         raise
 
     loading.empty()
+    render_server_admin_panel(config, enabled=server_admin_enabled)
     render_component(
         build_html_document(
             board_lists,
@@ -151,3 +156,4 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
+

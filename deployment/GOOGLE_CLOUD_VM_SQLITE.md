@@ -84,6 +84,7 @@ TRELLO_API_KEY = "..."
 TRELLO_TOKEN = "..."
 DATA_ENCRYPTION_KEY = "..."
 DISABLE_LOCAL_API = true
+SERVER_ADMIN_NATIVE = true
 
 [auth.users.admin]
 name = "admin"
@@ -94,7 +95,7 @@ name = "coordinacion"
 password_hash = "pbkdf2_sha256$600000$..."
 ```
 
-Para el primer despliegue seguro en VM dejamos `DISABLE_LOCAL_API = true`. Asi conservas SQLite persistente y acceso multi-dispositivo al panel sin exponer endpoints de escritura. La edicion/sincronizacion remota completa requiere una etapa adicional: mover la API de mutaciones detras de HTTPS/proxy autenticado o reemplazarla por controles nativos de Streamlit.
+Para el despliegue seguro en VM dejamos `DISABLE_LOCAL_API = true` y `SERVER_ADMIN_NATIVE = true`. Asi conservas SQLite persistente y acceso multi-dispositivo al panel sin exponer endpoints de escritura publicos. Las acciones reales se hacen desde el expander `Panel servidor seguro`, ejecutadas por Python en el servidor.
 
 ## Subir SQLite desde tu PC
 

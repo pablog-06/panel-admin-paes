@@ -353,3 +353,8 @@ credenciales fuera del navegador.
 
 
 
+
+
+## Modo seguro VM
+
+En Google Cloud VM usa `DISABLE_LOCAL_API = true` y `SERVER_ADMIN_NATIVE = true` en `.streamlit/secrets.toml`. Asi el panel administra SQLite y sincroniza Trello desde Python en el servidor, sin exponer una API de escritura publica.
