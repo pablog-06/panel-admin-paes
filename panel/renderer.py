@@ -1,4 +1,4 @@
-﻿from __future__ import annotations
+from __future__ import annotations
 
 import html
 import json
@@ -282,8 +282,10 @@ def build_html_document(
     version: str = "v-etapa2-readonly-1",
     trello_api_base: str = "",
     trello_api_token: str = "",
+    component_state: dict[str, Any] | None = None,
 ) -> str:
     data_json = json.dumps(lists, ensure_ascii=True)
+    component_state_json = json.dumps(component_state or {}, ensure_ascii=True)
     lists_html = "".join(render_list(board_list, read_only=read_only) for board_list in lists)
     readonly_class = " is-read-only" if read_only else ""
     trello_class = " is-trello-edit" if trello_api_base else ""
