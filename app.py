@@ -36,6 +36,7 @@ _server_admin = importlib.reload(_server_admin)
 _streamlit_shell = importlib.reload(_streamlit_shell)
 
 from panel.admin_actions import execute_admin_action
+from panel.audit import write_audit_log
 from panel.auth import require_login
 from panel.bridge_component import render_bridge_component
 from panel.local_api import ensure_local_api
@@ -165,7 +166,10 @@ def main() -> None:
             if action_id and st.session_state.get("last_bridge_action_id") != action_id:
                 st.session_state["last_bridge_action_id"] = action_id
                 try:
-                    execute_admin_action(str(action.get("path") or ""), action.get("payload") or {}, config)
+                    bridge_path = str(action.get("path") or "")
+                    bridge_payload = action.get("payload") or {}
+                    write_audit_log("Bridge UI", f"Accion recibida desde UI visual: {bridge_path}", meta={"path": bridge_path})
+                    execute_admin_action(bridge_path, bridge_payload, config)
                     st.cache_data.clear()
                     st.rerun()
                 except Exception as exc:
