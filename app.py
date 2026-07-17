@@ -1,4 +1,4 @@
-﻿from __future__ import annotations
+from __future__ import annotations
 
 import importlib
 import os
@@ -52,7 +52,7 @@ from panel.streamlit_shell import configure_page, hide_streamlit_chrome, render_
 from panel.trello_client import TrelloConfig
 
 
-APP_VERSION = "v-etapa6-server-only-1"
+APP_VERSION = "v-etapa6-visual-server-1"
 LOCAL_API_PORT = 8771
 
 
@@ -112,7 +112,8 @@ def main() -> None:
         import_summary = bootstrap_master_if_empty(config)
         board_title = "Panel PAES"
         board_lists = [build_results_panel(), *load_master_board()]
-        read_only = bool(disable_local_api)
+        component_action_mode = bool(disable_local_api and config.is_complete)
+        read_only = False if component_action_mode else bool(disable_local_api)
         subtitle = "Fuente maestra local SQLite - edicion server-side"
         if import_summary.get("status") == "imported":
             subtitle = (
@@ -122,15 +123,12 @@ def main() -> None:
         trello_api_base = ""
         trello_api_token = ""
 
-        if config.is_complete and not disable_local_api:
+        if component_action_mode:
+            trello_api_base = "__STREAMLIT_COMPONENT__"
+            trello_api_token = ""
+        elif config.is_complete and not disable_local_api:
             local_api_endpoint = ensure_local_api(config, port=LOCAL_API_PORT)
             trello_api_base, _, trello_api_token = local_api_endpoint.partition("|")
-        elif config.is_complete and disable_local_api:
-            st.info(
-                "Modo seguro VM activo: la edicion real se realiza solo desde el panel "
-                "servidor seguro. El tablero visual inferior queda en modo lectura para "
-                "evitar acciones no persistentes."
-            )
         else:
             st.warning(
                 "El panel local esta disponible, pero faltan variables: "
@@ -153,7 +151,20 @@ def main() -> None:
         trello_api_base=trello_api_base,
         trello_api_token=trello_api_token,
     )
-    render_component(html_document, version=APP_VERSION)
+    component_result = render_component(
+        html_document,
+        version=APP_VERSION,
+        action_mode=component_action_mode,
+    )
+    action = getattr(component_result, "action", None) if component_result is not None else None
+    if component_action_mode and isinstance(action, dict):
+        action_id = str(action.get("id") or "")
+        path = str(action.get("path") or "")
+        payload = action.get("payload") if isinstance(action.get("payload"), dict) else {}
+        if action_id and path and st.session_state.get("last_visual_action_id") != action_id:
+            st.session_state["last_visual_action_id"] = action_id
+            execute_admin_action(path, payload, config)
+            st.rerun()
 
 
 if __name__ == "__main__":

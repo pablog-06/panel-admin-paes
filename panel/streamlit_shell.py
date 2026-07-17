@@ -4,6 +4,50 @@ import streamlit as st
 import streamlit.components.v1 as components
 
 
+BOARD_ACTION_COMPONENT_JS = r"""
+export default function(component) {
+    const { data, setTriggerValue, parentElement } = component;
+    let frame = parentElement.querySelector('#paes-board-action-frame');
+    if (!frame) {
+        frame = document.createElement('iframe');
+        frame.id = 'paes-board-action-frame';
+        frame.title = 'Panel PAES';
+        frame.style.width = '100%';
+        frame.style.height = '1080px';
+        frame.style.border = '0';
+        frame.style.display = 'block';
+        frame.setAttribute('sandbox', 'allow-scripts allow-forms allow-popups allow-downloads allow-same-origin');
+        parentElement.appendChild(frame);
+    }
+
+    const html = data?.html || '';
+    const version = data?.version || '';
+    const marker = `${version}:${html.length}`;
+    if (frame.dataset.marker !== marker) {
+        frame.dataset.marker = marker;
+        frame.srcdoc = html;
+    }
+
+    const handler = (event) => {
+        if (event.source !== frame.contentWindow) return;
+        const message = event.data || {};
+        if (message.source !== 'admin-paes-component-action') return;
+        setTriggerValue('action', message.action || {});
+    };
+    window.addEventListener('message', handler);
+    return () => window.removeEventListener('message', handler);
+}
+"""
+
+
+_board_action_component = st.components.v2.component(
+    "paes_visual_board_actions",
+    html='<div id="paes-board-action-root"></div>',
+    js=BOARD_ACTION_COMPONENT_JS,
+    isolate_styles=False,
+)
+
+
 def configure_page() -> None:
     st.set_page_config(
         page_title="Panel PAES",
@@ -141,9 +185,23 @@ def render_loading_screen(version: str) -> None:
     )
 
 
-def render_component(html_document: str, version: str = "v-etapa3-no-parent-nav-1") -> None:
+def render_component(
+    html_document: str,
+    version: str = "v-etapa3-no-parent-nav-1",
+    *,
+    action_mode: bool = False,
+):
+    if action_mode:
+        return _board_action_component(
+            data={"html": html_document, "version": version},
+            key="paes-visual-board-actions",
+            on_action_change=lambda: None,
+            height=1080,
+        )
+
     components.html(
         html_document,
         height=1080,
         scrolling=False,
     )
+    return None

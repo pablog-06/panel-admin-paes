@@ -451,6 +451,8 @@ def _render_sync(config: TrelloConfig) -> None:
     with col_c:
         if st.button("Iniciar sincronizacion", use_container_width=True):
             try:
+                st.session_state.pop("server_sync_job", None)
+                st.session_state.pop("server_sync_result", None)
                 result = _safe_action(
                     config,
                     "/sync-start-students",
@@ -463,26 +465,45 @@ def _render_sync(config: TrelloConfig) -> None:
 
     job_id = st.session_state.get("server_sync_job_id")
     if job_id:
+        def _clear_missing_sync_job(message: str) -> None:
+            st.session_state.pop("server_sync_job_id", None)
+            st.session_state.pop("server_sync_job", None)
+            st.warning(message)
+
         if st.button("Actualizar progreso", use_container_width=True):
             try:
                 st.session_state["server_sync_job"] = _safe_action(config, "/sync-status", {"job_id": job_id})
             except Exception as exc:
-                st.error(str(exc))
-        job = st.session_state.get("server_sync_job") or _safe_action(config, "/sync-status", {"job_id": job_id})
-        total = int(job.get("total_boards") or 0)
-        completed = int(job.get("completed_boards") or 0)
-        if total:
-            st.progress(min(completed / total, 1.0), text=f"{completed}/{total} boards procesados")
-        st.caption(f"Estado: {job.get('status', 'queued')} - {job.get('note', '')}")
-        progress = job.get("progress") or []
-        if progress:
-            cols = st.columns(6)
-            for idx, item in enumerate(progress[-24:]):
-                status = str(item.get("status") or "")
-                symbol = "OK" if status in {"done", "synced"} else "..." if status == "syncing" else "!"
-                cols[idx % 6].caption(f"{symbol} {item.get('student_name') or item.get('board_id')}")
-        if job.get("status") in {"done", "error"} and job.get("result"):
-            st.session_state["server_sync_result"] = job.get("result")
+                _clear_missing_sync_job(
+                    "La sincronizacion anterior ya no esta disponible en esta sesion. "
+                    "Genera una nueva vista previa e inicia otra sincronizacion."
+                )
+        job = st.session_state.get("server_sync_job")
+        if job is None and st.session_state.get("server_sync_job_id"):
+            try:
+                job = _safe_action(config, "/sync-status", {"job_id": job_id})
+                st.session_state["server_sync_job"] = job
+            except Exception:
+                _clear_missing_sync_job(
+                    "La sincronizacion anterior ya no esta disponible en esta sesion. "
+                    "No se perdieron datos; inicia una nueva sincronizacion cuando lo necesites."
+                )
+                job = None
+        if job:
+            total = int(job.get("total_boards") or 0)
+            completed = int(job.get("completed_boards") or 0)
+            if total:
+                st.progress(min(completed / total, 1.0), text=f"{completed}/{total} boards procesados")
+            st.caption(f"Estado: {job.get('status', 'queued')} - {job.get('note', '')}")
+            progress = job.get("progress") or []
+            if progress:
+                cols = st.columns(6)
+                for idx, item in enumerate(progress[-24:]):
+                    status = str(item.get("status") or "")
+                    symbol = "OK" if status in {"done", "synced"} else "..." if status == "syncing" else "!"
+                    cols[idx % 6].caption(f"{symbol} {item.get('student_name') or item.get('board_id')}")
+            if job.get("status") in {"done", "error"} and job.get("result"):
+                st.session_state["server_sync_result"] = job.get("result")
 
     plan = st.session_state.get("server_sync_plan")
     if plan:
@@ -525,13 +546,11 @@ def render_server_admin_panel(config: TrelloConfig, *, enabled: bool) -> None:
         </style>
         """
     )
-    with st.expander("Panel servidor seguro", expanded=True):
-        tabs = st.tabs(["Administracion", "Contenido", "Visibilidad", "Sincronizacion"])
+    with st.expander("Panel servidor seguro", expanded=False):
+        tabs = st.tabs(["Administracion", "Visibilidad", "Sincronizacion"])
         with tabs[0]:
             _render_trello_admin(config)
         with tabs[1]:
-            _render_content_editor(config)
-        with tabs[2]:
             _render_visibility(config)
-        with tabs[3]:
+        with tabs[2]:
             _render_sync(config)

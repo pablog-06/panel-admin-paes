@@ -2516,6 +2516,7 @@ def build_html_document(
     const READ_ONLY = __READ_ONLY__;
     const TRELLO_API_BASE = "__TRELLO_API_BASE__";
     const TRELLO_API_TOKEN = "__TRELLO_API_TOKEN__";
+    const COMPONENT_MODE = TRELLO_API_BASE === "__STREAMLIT_COMPONENT__";
     const TRELLO_MODE = Boolean(TRELLO_API_BASE);
     const STORAGE_KEY = "admin-paes-board-state-v1";
     const AUDIT_STORAGE_KEY = "admin-paes-audit-events-v1";
@@ -2831,7 +2832,20 @@ def build_html_document(
         if (audit) {
             storeLocalAuditEvent(audit.action, audit.detail, audit.meta);
         }
-        setSaveStatus(path.startsWith("/sync-") ? "Sincronizando" : "Guardando local", "saving");
+        setSaveStatus(path.startsWith("/sync-") ? "Sincronizando" : "Guardando en servidor", "saving");
+        if (COMPONENT_MODE) {
+            const actionId = `${Date.now()}-${Math.random().toString(16).slice(2)}`;
+            window.parent.postMessage({
+                source: "admin-paes-component-action",
+                action: { id: actionId, path, payload, audit },
+            }, "*");
+            return {
+                id: payload.id || payload.list_id || `pending-${actionId}`,
+                card_id: payload.card_id || payload.id || `pending-${actionId}`,
+                name: payload.name || payload.title || "",
+                pos: payload.pos || Date.now(),
+            };
+        }
         const response = await fetch(`${TRELLO_API_BASE}${path}`, {
             method: "POST",
             headers: { "Content-Type": "application/json", "X-Admin-PAES-Token": TRELLO_API_TOKEN },
@@ -2859,6 +2873,9 @@ def build_html_document(
 
     async function callLocalApi(path, payload = {}) {
         if (!TRELLO_MODE) return null;
+        if (COMPONENT_MODE) {
+            throw new Error("Esta accion usa el panel server-side superior. El tablero visual guarda listas y tarjetas directamente en SQLite.");
+        }
         let response;
         try {
             response = await fetch(`${TRELLO_API_BASE}${path}`, {
@@ -3342,7 +3359,7 @@ def build_html_document(
 
     async function refreshAuditLog() {
         if (!auditList) return;
-        if (!TRELLO_MODE) {
+        if (!TRELLO_MODE || COMPONENT_MODE) {
             renderAuditLog(localAuditEvents());
             return;
         }
