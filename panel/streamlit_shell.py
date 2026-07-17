@@ -16,7 +16,7 @@ export default function(component) {
         frame.style.height = '1080px';
         frame.style.border = '0';
         frame.style.display = 'block';
-        frame.setAttribute('sandbox', 'allow-scripts allow-forms allow-popups allow-downloads allow-same-origin');
+        frame.setAttribute('sandbox', 'allow-scripts allow-forms allow-popups allow-downloads allow-modals allow-same-origin');
         parentElement.appendChild(frame);
     }
 

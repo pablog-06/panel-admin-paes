@@ -2517,6 +2517,7 @@ def build_html_document(
     const TRELLO_API_BASE = "__TRELLO_API_BASE__";
     const TRELLO_API_TOKEN = "__TRELLO_API_TOKEN__";
     const COMPONENT_MODE = TRELLO_API_BASE === "__STREAMLIT_COMPONENT__";
+    const COMPONENT_STATE = __COMPONENT_STATE_JSON__;
     const TRELLO_MODE = Boolean(TRELLO_API_BASE);
     const STORAGE_KEY = "admin-paes-board-state-v1";
     const AUDIT_STORAGE_KEY = "admin-paes-audit-events-v1";
@@ -2871,10 +2872,50 @@ def build_html_document(
         return data.result;
     }
 
+    function componentFallbackResult(path) {
+        if (path === "/sync-preview-students") {
+            return { students: [], actions: [], errors: [], summary: {}, component_pending: true };
+        }
+        if (path === "/sync-start-students") {
+            return { job_id: "component-pending", status: "queued", component_pending: true };
+        }
+        if (path === "/sync-status") {
+            return { status: "queued", note: "Solicitud enviada al servidor. Actualiza progreso en unos segundos.", progress: [], component_pending: true };
+        }
+        if (path === "/audit-log") {
+            return { events: localAuditEvents() };
+        }
+        if (path === "/student-boards") {
+            return { students: COMPONENT_STATE.students || [] };
+        }
+        if (path === "/visibility-get") {
+            return COMPONENT_STATE["/visibility-get"] || { hidden_student_ids: [] };
+        }
+        if (path === "/admin-dashboard") {
+            return COMPONENT_STATE["/admin-dashboard"] || {};
+        }
+        if (path === "/cohort-status") {
+            return COMPONENT_STATE["/cohort-status"] || {};
+        }
+        if (path === "/refresh-results") {
+            return COMPONENT_STATE["/refresh-results"] || null;
+        }
+        return null;
+    }
+
     async function callLocalApi(path, payload = {}) {
         if (!TRELLO_MODE) return null;
         if (COMPONENT_MODE) {
-            throw new Error("Esta accion usa el panel server-side superior. El tablero visual guarda listas y tarjetas directamente en SQLite.");
+            const cached = COMPONENT_STATE[path];
+            const actionId = `${Date.now()}-${Math.random().toString(16).slice(2)}`;
+            window.parent.postMessage({
+                source: "admin-paes-component-action",
+                action: { id: actionId, path, payload },
+            }, "*");
+            setSaveStatus("Procesando en servidor", "saving");
+            if (cached && cached.ok) return cached.result;
+            if (cached && cached.error) throw new Error(cached.error);
+            return componentFallbackResult(path);
         }
         let response;
         try {
@@ -3215,7 +3256,7 @@ def build_html_document(
 
     async function openVisibilityModal(contentType, contentId, title) {
         if (!TRELLO_MODE) {
-            alert("En modo VM seguro, usa Panel servidor seguro > Visibilidad para ocultar o mostrar contenido por alumno.");
+            alert("En modo VM seguro, la visibilidad se guarda desde este tablero y se aplica al sincronizar alumnos.");
             return;
         }
         activeVisibilityTarget = { contentType, contentId, title };
@@ -4567,6 +4608,7 @@ def build_html_document(
         "__TRELLO_CLASS__": trello_class,
         "__TRELLO_API_BASE__": escape_text(trello_api_base),
         "__TRELLO_API_TOKEN__": escape_text(trello_api_token),
+        "__COMPONENT_STATE_JSON__": component_state_json,
         "__ICON_ADD__": icon("add"),
         "__ICON_ARROW_DOWN__": icon("arrow_down"),
         "__ICON_ARROW_LEFT__": icon("arrow_left"),

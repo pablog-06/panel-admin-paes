@@ -14,7 +14,6 @@ import panel.master_import as _master_import
 import panel.renderer as _renderer
 import panel.results_db as _results_db
 import panel.security_gate as _security_gate
-import panel.server_admin as _server_admin
 import panel.student_sync as _student_sync
 import panel.streamlit_shell as _streamlit_shell
 import panel.trello_client as _trello_client
@@ -30,7 +29,6 @@ _local_api = importlib.reload(_local_api)
 _master_import = importlib.reload(_master_import)
 _renderer = importlib.reload(_renderer)
 _security_gate = importlib.reload(_security_gate)
-_server_admin = importlib.reload(_server_admin)
 _streamlit_shell = importlib.reload(_streamlit_shell)
 
 from panel.admin_actions import execute_admin_action
@@ -47,12 +45,11 @@ from panel.results_db import (
     migrate_queued_content_to_master,
 )
 from panel.security_gate import require_local_encryption
-from panel.server_admin import render_server_admin_panel
 from panel.streamlit_shell import configure_page, hide_streamlit_chrome, render_component, render_loading_screen
 from panel.trello_client import TrelloConfig
 
 
-APP_VERSION = "v-etapa6-visual-server-1"
+APP_VERSION = "v-etapa6-visual-server-2"
 LOCAL_API_PORT = 8771
 
 
@@ -94,7 +91,6 @@ def main() -> None:
     hide_streamlit_chrome()
     config = trello_config()
     disable_local_api = _bool_secret_or_env("DISABLE_LOCAL_API", False)
-    server_admin_enabled = _bool_secret_or_env("SERVER_ADMIN_NATIVE", True)
     if config.is_complete and not disable_local_api:
         ensure_local_api(config, port=LOCAL_API_PORT)
     user = require_login(APP_VERSION)
@@ -141,7 +137,7 @@ def main() -> None:
         raise
 
     loading.empty()
-    render_server_admin_panel(config, enabled=server_admin_enabled)
+    visual_action_results = st.session_state.setdefault("visual_action_results", {})
     html_document = build_html_document(
         board_lists,
         board_title=board_title,
@@ -150,6 +146,7 @@ def main() -> None:
         version=APP_VERSION,
         trello_api_base=trello_api_base,
         trello_api_token=trello_api_token,
+        component_state=visual_action_results,
     )
     component_result = render_component(
         html_document,
@@ -163,7 +160,12 @@ def main() -> None:
         payload = action.get("payload") if isinstance(action.get("payload"), dict) else {}
         if action_id and path and st.session_state.get("last_visual_action_id") != action_id:
             st.session_state["last_visual_action_id"] = action_id
-            execute_admin_action(path, payload, config)
+            try:
+                result = execute_admin_action(path, payload, config)
+                visual_action_results[path] = {"ok": True, "result": result}
+            except Exception as exc:
+                visual_action_results[path] = {"ok": False, "error": str(exc)}
+                st.session_state["last_visual_action_error"] = str(exc)
             st.rerun()
 
 
