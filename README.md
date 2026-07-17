@@ -360,6 +360,9 @@ credenciales fuera del navegador.
 En Google Cloud VM usa `DISABLE_LOCAL_API = true` y `SERVER_ADMIN_NATIVE = true` en `.streamlit/secrets.toml`. Asi el panel administra SQLite y sincroniza Trello desde Python en el servidor, sin exponer una API de escritura publica.
 
 
-### Bridge seguro de UI
 
-En VM se recomienda `DISABLE_LOCAL_API = true`, `SERVER_ADMIN_NATIVE = true` y `SERVER_UI_BRIDGE = true`. La UI visual inferior envia acciones a Python mediante el componente Streamlit interno, sin abrir una API publica adicional.
+
+### Modo server-side estricto
+
+En VM se recomienda `DISABLE_LOCAL_API = true` y `SERVER_ADMIN_NATIVE = true`. En este modo, toda accion persistente ocurre desde `Panel servidor seguro`; el tablero visual inferior queda como lectura para evitar inconsistencias entre navegador, SQLite y Trello.
+

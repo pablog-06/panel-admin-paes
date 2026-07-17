@@ -31,8 +31,8 @@ def _list_options(lists: list[dict[str, Any]]) -> dict[str, str]:
     return {str(item.get("name") or "Lista"): str(item.get("id") or "") for item in lists}
 
 
-def _card_options(lists: list[dict[str, Any]]) -> dict[str, dict[str, str]]:
-    options: dict[str, dict[str, str]] = {}
+def _card_options(lists: list[dict[str, Any]]) -> dict[str, dict[str, Any]]:
+    options: dict[str, dict[str, Any]] = {}
     for list_item in lists:
         list_name = str(list_item.get("name") or "Lista")
         list_id = str(list_item.get("id") or "")
@@ -40,6 +40,7 @@ def _card_options(lists: list[dict[str, Any]]) -> dict[str, dict[str, str]]:
             card_id = str(card.get("id") or "")
             if card_id:
                 options[f"{list_name} / {card.get('title') or 'Tarjeta'}"] = {
+                    **card,
                     "card_id": card_id,
                     "list_id": list_id,
                     "list_name": list_name,
@@ -47,6 +48,28 @@ def _card_options(lists: list[dict[str, Any]]) -> dict[str, dict[str, str]]:
                     "description": str(card.get("description") or ""),
                 }
     return options
+
+
+def _move_position(items: list[dict[str, Any]], current_id: str, direction: int) -> float:
+    ordered = sorted(items, key=lambda item: float(item.get("pos") or 0))
+    ids = [str(item.get("id") or "") for item in ordered]
+    if current_id not in ids:
+        return float(len(ordered) + 1) * 1000.0
+    index = ids.index(current_id)
+    target = max(0, min(len(ordered) - 1, index + direction))
+    if target == index:
+        return float(ordered[index].get("pos") or (index + 1) * 1000)
+    ordered[index], ordered[target] = ordered[target], ordered[index]
+    return float((target + 1) * 1000)
+
+
+def _links_to_text(items: list[Any]) -> str:
+    return "\n".join(str(item) for item in (items or []) if str(item).strip())
+
+
+def _first_checklist(card: dict[str, Any]) -> dict[str, Any]:
+    checklists = card.get("checklists") or []
+    return checklists[0] if checklists and isinstance(checklists[0], dict) else {}
 
 
 def _rerun_after_success(message: str) -> None:
@@ -118,14 +141,24 @@ def _render_content_editor(config: TrelloConfig) -> None:
     list_options = _list_options(lists)
     card_options = _card_options(lists)
 
-    st.subheader("Contenido maestro local")
-    st.caption("Estas acciones escriben SQLite local, dejan logs/backups y marcan contenido pendiente para alumnos.")
-    col_a, col_b = st.columns(2)
+    st.subheader("Tablero maestro server-side")
+    st.caption("Todas las acciones escriben SQLite en la VM, dejan logs/backups y quedan pendientes para sincronizar por lote.")
 
-    with col_a:
+    with st.container(horizontal=True, gap="small"):
+        if st.button("Nueva lista", icon=":material/add:", width="content"):
+            st.session_state["server_content_mode"] = "new_list"
+        if st.button("Nueva tarjeta", icon=":material/note_add:", type="primary", width="content"):
+            st.session_state["server_content_mode"] = "new_card"
+            st.session_state.pop("server_selected_card", None)
+        if st.button("Vista previa sync", icon=":material/manage_search:", width="content"):
+            st.session_state["server_content_mode"] = "sync_hint"
+
+    mode = st.session_state.get("server_content_mode", "new_card")
+
+    if mode == "new_list":
         with st.form("server_create_list", clear_on_submit=True):
-            name = st.text_input("Nueva lista")
-            submitted = st.form_submit_button("Crear lista")
+            name = st.text_input("Nombre de la lista")
+            submitted = st.form_submit_button("Crear lista", type="primary")
         if submitted:
             try:
                 _safe_action(config, "/create-list", {"name": name})
@@ -133,93 +166,166 @@ def _render_content_editor(config: TrelloConfig) -> None:
             except Exception as exc:
                 st.error(str(exc))
 
-    with col_b:
-        if list_options:
-            with st.form("server_archive_list"):
-                selected = st.selectbox("Archivar lista", list(list_options.keys()))
-                confirmation = st.text_input("Escribe ARCHIVAR para confirmar")
-                submitted = st.form_submit_button("Archivar lista")
-            if submitted:
-                if confirmation != "ARCHIVAR":
-                    st.error("Confirmacion incorrecta.")
-                else:
-                    try:
-                        _safe_action(config, "/archive-list", {"list_id": list_options[selected], "list_name": selected})
-                        _rerun_after_success("Lista archivada.")
-                    except Exception as exc:
-                        st.error(str(exc))
+    if mode == "sync_hint":
+        st.info("Ve a la pestana Sincronizacion para revisar y aplicar cambios en los boards de alumnos. Ensayos no se toca.")
 
     st.divider()
-    edit_mode = st.toggle("Editar tarjeta existente", value=False)
-    selected_card_key = ""
-    selected_card = {}
-    if edit_mode and card_options:
-        selected_card_key = st.selectbox("Tarjeta a editar", list(card_options.keys()))
-        selected_card = card_options.get(selected_card_key) or {}
+    st.markdown("**Tablero local**")
+    if not lists:
+        st.info("No hay listas activas. Crea una lista para comenzar.")
+    else:
+        board = st.container(horizontal=True, horizontal_alignment="left", vertical_alignment="top", gap="small")
+        with board:
+            for list_item in lists:
+                list_id = str(list_item.get("id") or "")
+                list_name = str(list_item.get("name") or "Lista")
+                cards = list_item.get("cards") or []
+                with st.container(border=True, width=280, height=520):
+                    st.markdown(f"**{list_name}**")
+                    st.caption(f"{len(cards)} tarjeta(s)")
+                    with st.container(horizontal=True, gap="xxsmall"):
+                        if st.button("Arriba", key=f"list_up_{list_id}", width="content"):
+                            pos = _move_position(lists, list_id, -1)
+                            _safe_action(config, "/move-list", {"list_id": list_id, "pos": pos, "list_name": list_name})
+                            _rerun_after_success("Lista movida.")
+                        if st.button("Abajo", key=f"list_down_{list_id}", width="content"):
+                            pos = _move_position(lists, list_id, 1)
+                            _safe_action(config, "/move-list", {"list_id": list_id, "pos": pos, "list_name": list_name})
+                            _rerun_after_success("Lista movida.")
+                        if st.button("Ocultar", key=f"vis_list_{list_id}", width="content"):
+                            st.session_state["server_visibility_target"] = {"content_type": "list", "content_id": list_id}
+                            st.session_state["server_content_mode"] = "visibility_jump"
+                            st.info("Abre la pestana Visibilidad para ajustar esta lista.")
+                    if st.button("Nueva tarjeta aqui", key=f"new_card_{list_id}", icon=":material/add:", width="stretch"):
+                        st.session_state["server_content_mode"] = "new_card"
+                        st.session_state["server_default_list_id"] = list_id
+                        st.session_state.pop("server_selected_card", None)
+                        st.rerun()
+                    if st.button("Archivar lista", key=f"archive_list_{list_id}", icon=":material/delete:", width="stretch"):
+                        st.session_state["server_content_mode"] = "archive_list"
+                        st.session_state["server_archive_list_id"] = list_id
+                        st.session_state["server_archive_list_name"] = list_name
+                        st.rerun()
+                    with st.container(height=310):
+                        for card in cards:
+                            card_id = str(card.get("id") or "")
+                            title = str(card.get("title") or "Tarjeta")
+                            badges = []
+                            if card.get("links"):
+                                badges.append(f"links {len(card.get('links') or [])}")
+                            if card.get("images"):
+                                badges.append(f"img {len(card.get('images') or [])}")
+                            if card.get("files"):
+                                badges.append(f"pdf {len(card.get('files') or [])}")
+                            if card.get("checklists"):
+                                badges.append(f"chk {len(card.get('checklists') or [])}")
+                            with st.container(border=True):
+                                st.markdown(f"**{title}**")
+                                if card.get("description"):
+                                    st.caption(str(card.get("description"))[:120])
+                                if badges:
+                                    st.caption(" - ".join(badges))
+                                with st.container(horizontal=True, gap="xxsmall"):
+                                    if st.button("Editar", key=f"edit_{card_id}", icon=":material/edit:", width="content"):
+                                        st.session_state["server_content_mode"] = "edit_card"
+                                        st.session_state["server_selected_card"] = card_id
+                                        st.rerun()
+                                    if st.button("Subir", key=f"card_up_{card_id}", width="content"):
+                                        pos = _move_position(cards, card_id, -1)
+                                        _safe_action(config, "/move-card", {"card_id": card_id, "list_id": list_id, "pos": pos, "card_title": title, "list_name": list_name})
+                                        _rerun_after_success("Tarjeta movida.")
+                                    if st.button("Bajar", key=f"card_down_{card_id}", width="content"):
+                                        pos = _move_position(cards, card_id, 1)
+                                        _safe_action(config, "/move-card", {"card_id": card_id, "list_id": list_id, "pos": pos, "card_title": title, "list_name": list_name})
+                                        _rerun_after_success("Tarjeta movida.")
+                                if st.button("Eliminar tarjeta", key=f"archive_card_{card_id}", icon=":material/delete:", width="stretch"):
+                                    st.session_state["server_content_mode"] = "archive_card"
+                                    st.session_state["server_archive_card_id"] = card_id
+                                    st.session_state["server_archive_card_title"] = title
+                                    st.rerun()
 
-    default_list_name = selected_card.get("list_name") if selected_card else ""
-    default_list_index = list(list_options.keys()).index(default_list_name) if default_list_name in list_options else 0
-    with st.form("server_upsert_card", clear_on_submit=not edit_mode):
-        selected_list = st.selectbox("Lista destino", list(list_options.keys()) if list_options else [], index=default_list_index)
-        title = st.text_input("Titulo tarjeta", value=str(selected_card.get("title") or ""))
-        description = st.text_area("Descripcion", value=str(selected_card.get("description") or ""), height=100)
-        links_text = st.text_area("Links", placeholder="Un link por linea", height=80)
-        checklist_title = st.text_input("Checklist: titulo opcional")
-        checklist_description = st.text_input("Checklist: descripcion opcional")
-        checklist_link = st.text_input("Checklist: link opcional")
-        image_uploads = st.file_uploader("Imagenes", type=["png", "jpg", "jpeg", "webp"], accept_multiple_files=True)
-        pdf_uploads = st.file_uploader("PDFs", type=["pdf"], accept_multiple_files=True)
-        submitted = st.form_submit_button("Guardar tarjeta")
-    if submitted:
+    st.divider()
+    mode = st.session_state.get("server_content_mode", "new_card")
+    selected_card_id = str(st.session_state.get("server_selected_card") or "")
+    selected_card = next((value for value in card_options.values() if str(value.get("card_id") or "") == selected_card_id), {})
+    editing = mode == "edit_card" and bool(selected_card)
+    if mode in {"new_card", "edit_card"}:
+        st.markdown("**Editor de tarjeta**")
         if not list_options:
-            st.error("Primero crea una lista.")
+            st.warning("Primero crea una lista.")
         else:
-            checklists = []
-            if checklist_title.strip():
-                checklists.append(
-                    {
-                        "title": checklist_title.strip(),
+            default_list_id = str(selected_card.get("list_id") or st.session_state.get("server_default_list_id") or "")
+            list_names = list(list_options.keys())
+            default_list_name = next((name for name, value in list_options.items() if value == default_list_id), list_names[0])
+            default_index = list_names.index(default_list_name)
+            checklist = _first_checklist(selected_card)
+            with st.form("server_card_editor", clear_on_submit=not editing):
+                selected_list = st.selectbox("Lista destino", list_names, index=default_index)
+                title = st.text_input("Titulo", value=str(selected_card.get("title") or ""))
+                description = st.text_area("Descripcion", value=str(selected_card.get("description") or ""), height=110)
+                links_text = st.text_area("Links", value=_links_to_text(selected_card.get("links") or []), placeholder="Un link por linea", height=90)
+                st.caption("Checklist opcional. Para otra tarea, guarda esta tarjeta y agrega otra checklist en una siguiente edicion.")
+                checklist_title = st.text_input("Checklist: titulo", value=str(checklist.get("title") or ""))
+                checklist_description = st.text_input("Checklist: descripcion", value=str(checklist.get("description") or ""))
+                checklist_link = st.text_input("Checklist: link", value=str(checklist.get("link") or ""))
+                image_uploads = st.file_uploader("Adjuntar imagenes", type=["png", "jpg", "jpeg", "webp"], accept_multiple_files=True)
+                pdf_uploads = st.file_uploader("Adjuntar PDFs", type=["pdf"], accept_multiple_files=True)
+                submitted = st.form_submit_button("Guardar tarjeta", type="primary")
+            if submitted:
+                checklists = []
+                if checklist_title.strip() or checklist_description.strip() or checklist_link.strip():
+                    checklists.append({
+                        "title": checklist_title.strip() or "Checklist",
                         "description": checklist_description.strip(),
                         "link": checklist_link.strip(),
                         "items": [item for item in [checklist_description.strip(), checklist_link.strip()] if item],
-                    }
-                )
-            try:
-                _safe_action(
-                    config,
-                    "/save-card",
-                    {
-                        "card_id": selected_card.get("card_id", "") if edit_mode else "",
+                    })
+                images = list(selected_card.get("images") or []) + [_data_url(item) for item in (image_uploads or [])]
+                files = list(selected_card.get("files") or []) + [_data_url(item) for item in (pdf_uploads or [])]
+                try:
+                    _safe_action(config, "/save-card", {
+                        "card_id": selected_card_id if editing else "",
                         "list_id": list_options[selected_list],
                         "list_name": selected_list,
                         "title": title,
                         "description": description,
                         "links": [line.strip() for line in links_text.splitlines() if line.strip()],
-                        "images": [_data_url(item) for item in (image_uploads or [])],
-                        "files": [_data_url(item) for item in (pdf_uploads or [])],
+                        "images": images,
+                        "files": files,
                         "checklists": checklists,
-                    },
-                )
-                _rerun_after_success("Tarjeta guardada.")
-            except Exception as exc:
-                st.error(str(exc))
+                    })
+                    st.session_state["server_content_mode"] = "new_card"
+                    st.session_state.pop("server_selected_card", None)
+                    _rerun_after_success("Tarjeta guardada.")
+                except Exception as exc:
+                    st.error(str(exc))
 
-    if card_options:
-        with st.form("server_archive_card"):
-            selected_card_to_archive = st.selectbox("Archivar tarjeta", list(card_options.keys()))
-            confirmation = st.text_input("Escribe ARCHIVAR para confirmar", key="archive_card_confirmation")
-            submitted = st.form_submit_button("Archivar tarjeta")
-        if submitted:
+    if mode == "archive_list":
+        list_id = str(st.session_state.get("server_archive_list_id") or "")
+        list_name = str(st.session_state.get("server_archive_list_name") or list_id)
+        st.warning(f"Archivar lista: {list_name}")
+        confirmation = st.text_input("Escribe ARCHIVAR para confirmar", key="confirm_archive_list_server")
+        if st.button("Confirmar archivar lista", type="primary", width="stretch"):
             if confirmation != "ARCHIVAR":
                 st.error("Confirmacion incorrecta.")
             else:
                 try:
-                    selected = card_options[selected_card_to_archive]
-                    _safe_action(
-                        config,
-                        "/archive-card",
-                        {"card_id": selected["card_id"], "card_title": selected_card_to_archive},
-                    )
+                    _safe_action(config, "/archive-list", {"list_id": list_id, "list_name": list_name})
+                    _rerun_after_success("Lista archivada.")
+                except Exception as exc:
+                    st.error(str(exc))
+
+    if mode == "archive_card":
+        card_id = str(st.session_state.get("server_archive_card_id") or "")
+        title = str(st.session_state.get("server_archive_card_title") or card_id)
+        st.warning(f"Archivar tarjeta: {title}")
+        confirmation = st.text_input("Escribe ARCHIVAR para confirmar", key="confirm_archive_card_server")
+        if st.button("Confirmar archivar tarjeta", type="primary", width="stretch"):
+            if confirmation != "ARCHIVAR":
+                st.error("Confirmacion incorrecta.")
+            else:
+                try:
+                    _safe_action(config, "/archive-card", {"card_id": card_id, "card_title": title})
                     _rerun_after_success("Tarjeta archivada.")
                 except Exception as exc:
                     st.error(str(exc))
@@ -292,7 +398,7 @@ def _render_visibility(config: TrelloConfig) -> None:
             st.session_state[key] = default_value
         with cols[index % 4]:
             visible_state[board_id] = st.checkbox(
-                f"{initials} ? {name}",
+                f"{initials} - {name}",
                 value=bool(st.session_state[key]),
                 key=key,
                 help=name,
@@ -386,7 +492,7 @@ def _render_sync(config: TrelloConfig) -> None:
             st.json({SAFE_ACTION_LABELS.get(key, key): value for key, value in summary.items()})
         for action in (plan.get("actions") or [])[:25]:
             label = SAFE_ACTION_LABELS.get(action.get("action"), action.get("action"))
-            st.write(f"- **{label}** ? {action.get('student_name')} ? {action.get('list_name')} / {action.get('card_title')}")
+            st.write(f"- **{label}** - {action.get('student_name')} - {action.get('list_name')} / {action.get('card_title')}")
         if len(plan.get("actions") or []) > 25:
             st.caption("Mostrando solo los primeros 25 cambios.")
 
@@ -419,7 +525,7 @@ def render_server_admin_panel(config: TrelloConfig, *, enabled: bool) -> None:
         </style>
         """
     )
-    with st.expander("Panel servidor seguro", expanded=False):
+    with st.expander("Panel servidor seguro", expanded=True):
         tabs = st.tabs(["Administracion", "Contenido", "Visibilidad", "Sincronizacion"])
         with tabs[0]:
             _render_trello_admin(config)
