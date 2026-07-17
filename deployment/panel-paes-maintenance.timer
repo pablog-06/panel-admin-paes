@@ -1,0 +1,10 @@
+[Unit]
+Description=Run Panel PAES storage maintenance daily
+
+[Timer]
+OnCalendar=*-*-* 03:20:00
+Persistent=true
+RandomizedDelaySec=20m
+
+[Install]
+WantedBy=timers.target

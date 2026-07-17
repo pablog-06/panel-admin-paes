@@ -160,18 +160,54 @@ journalctl -u panel-paes -f
 
 ## Politica de espacio para disco de 10 GB
 
-La app queda configurada con retencion conservadora:
+La app tiene dos capas de retencion:
 
-- Log activo: maximo 1 MB.
-- Logs rotados: maximo 3 archivos.
-- Backups cifrados internos: maximo 3 dias.
-- Backups cifrados internos: maximo 12 archivos.
+- Retencion interna al escribir logs/backups: rota logs cifrados y limita backups recientes.
+- Mantenimiento diario de VM: revisa uso de disco y borra backups/logs/exportaciones antiguos.
 
-Esto mantiene `data/logs/` alrededor de pocos MB. El espacio mas importante lo
-usaran `data/admin_paes.sqlite` y assets sincronizados. Para revisar uso en la VM:
+El mantenimiento nunca borra:
+
+- `data/admin_paes.sqlite`
+- `.streamlit/secrets.toml`
+- `assets/`
+- codigo del proyecto
+
+Probar sin borrar nada:
 
 ```bash
-du -h --max-depth=2 /opt/panel-admin-paes/data /opt/panel-admin-paes/assets | sort -h
+cd /opt/panel-admin-paes
+source .venv/bin/activate
+python scripts/storage_maintenance.py --dry-run --disk-limit-gb 10
+```
+
+Ejecutar limpieza manual:
+
+```bash
+python scripts/storage_maintenance.py --disk-limit-gb 10
+```
+
+Instalar limpieza automatica diaria con systemd:
+
+```bash
+cd /opt/panel-admin-paes
+sudo cp deployment/panel-paes-maintenance.service /etc/systemd/system/panel-paes-maintenance.service
+sudo cp deployment/panel-paes-maintenance.timer /etc/systemd/system/panel-paes-maintenance.timer
+sudo systemctl daemon-reload
+sudo systemctl enable --now panel-paes-maintenance.timer
+systemctl list-timers panel-paes-maintenance.timer
+```
+
+La politica aplicada por defecto para 10 GB es:
+
+- Bajo 80% de uso: limpia solo archivos antiguos segun retencion normal.
+- Sobre 80% de uso: usa retencion mas estricta.
+- Sobre 90% de uso: elimina los backups/logs/exportaciones mas antiguos hasta acercarse a 75%.
+- Mantiene siempre algunos backups/logs recientes por categoria.
+
+Para revisar uso en la VM:
+
+```bash
+du -h --max-depth=2 /opt/panel-admin-paes/data /opt/panel-admin-paes/assets /opt/panel-admin-paes/vm_backups 2>/dev/null | sort -h
 ```
 ## Backups de SQLite
 

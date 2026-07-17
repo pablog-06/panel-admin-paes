@@ -1,0 +1,11 @@
+[Unit]
+Description=Panel PAES storage maintenance
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=pgallardomesa
+WorkingDirectory=/opt/panel-admin-paes
+Environment=PYTHONUNBUFFERED=1
+ExecStart=/opt/panel-admin-paes/.venv/bin/python /opt/panel-admin-paes/scripts/storage_maintenance.py --disk-limit-gb 10 --soft-threshold 0.80 --hard-threshold 0.90 --target-threshold 0.75
