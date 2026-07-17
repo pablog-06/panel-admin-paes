@@ -1,25 +1,15 @@
-﻿from __future__ import annotations
+
+from __future__ import annotations
 
 import base64
 from typing import Any
 
 import streamlit as st
 
-from panel.audit import backup_database, write_audit_log
-from panel.results_db import (
-    archive_master_card,
-    archive_master_list,
-    create_master_list,
-    latest_exam_summary,
-    load_cohort_status,
-    load_master_board,
-    median_scores_by_exam,
-    sync_student_board_registry,
-    upsert_master_card,
-)
-from panel.student_sync import SAFE_ACTION_LABELS, apply_student_sync_plan, build_student_sync_plan
-from panel.trello_client import TrelloConfig, fetch_paes_board_inventory_read_only, fetch_student_boards_read_only, _fetch_student_boards_cached
-from scripts.import_essay_scores import import_scores
+from panel.admin_actions import execute_admin_action
+from panel.results_db import latest_exam_summary, load_cohort_status, load_master_board, median_scores_by_exam
+from panel.student_sync import SAFE_ACTION_LABELS
+from panel.trello_client import TrelloConfig
 
 
 def _data_url(uploaded_file: Any) -> dict[str, str]:
@@ -41,14 +31,21 @@ def _list_options(lists: list[dict[str, Any]]) -> dict[str, str]:
     return {str(item.get("name") or "Lista"): str(item.get("id") or "") for item in lists}
 
 
-def _card_options(lists: list[dict[str, Any]]) -> dict[str, str]:
-    options: dict[str, str] = {}
+def _card_options(lists: list[dict[str, Any]]) -> dict[str, dict[str, str]]:
+    options: dict[str, dict[str, str]] = {}
     for list_item in lists:
         list_name = str(list_item.get("name") or "Lista")
+        list_id = str(list_item.get("id") or "")
         for card in list_item.get("cards") or []:
             card_id = str(card.get("id") or "")
             if card_id:
-                options[f"{list_name} / {card.get('title') or 'Tarjeta'}"] = card_id
+                options[f"{list_name} / {card.get('title') or 'Tarjeta'}"] = {
+                    "card_id": card_id,
+                    "list_id": list_id,
+                    "list_name": list_name,
+                    "title": str(card.get("title") or ""),
+                    "description": str(card.get("description") or ""),
+                }
     return options
 
 
@@ -56,6 +53,10 @@ def _rerun_after_success(message: str) -> None:
     st.success(message)
     st.cache_data.clear()
     st.rerun()
+
+
+def _safe_action(config: TrelloConfig, path: str, payload: dict[str, Any] | None = None) -> Any:
+    return execute_admin_action(path, payload or {}, config)
 
 
 def _render_metrics() -> None:
@@ -78,7 +79,7 @@ def _render_metrics() -> None:
 
 def _render_trello_admin(config: TrelloConfig) -> None:
     st.subheader("Administracion server-side")
-    st.caption("Lee Trello y escribe SQLite desde Python en la VM. No abre una API publica adicional.")
+    st.caption("Mismo motor de acciones que el modo local, ejecutado desde Python en la VM.")
     _render_metrics()
 
     col_a, col_b = st.columns(2)
@@ -86,50 +87,39 @@ def _render_trello_admin(config: TrelloConfig) -> None:
         if st.button("Actualizar alumnos desde Trello", use_container_width=True):
             try:
                 with st.spinner("Leyendo boards PAES desde Trello..."):
-                    _fetch_student_boards_cached.cache_clear()
-                    inventory = fetch_paes_board_inventory_read_only(config)
-                    students = inventory.get("students") or []
-                    unknown = inventory.get("unknown") or []
-                    result = sync_student_board_registry(students)
+                    result = _safe_action(config, "/admin-dashboard", {"refresh": True, "limit": 80})
+                summary = result.get("refresh_summary") or {}
                 detail = (
-                    f"{result.get('active_count', 0)} alumno(s) activo(s), "
-                    f"{len(result.get('new_board_ids') or [])} nuevo(s), "
-                    f"{len(result.get('archived_board_ids') or [])} archivado(s), "
-                    f"{len(unknown)} board(s) PAES no identificado(s)."
+                    f"{summary.get('active_count', 0)} alumno(s) activo(s), "
+                    f"{len(summary.get('new_board_ids') or [])} nuevo(s), "
+                    f"{len(summary.get('archived_board_ids') or [])} archivado(s), "
+                    f"{result.get('unknown_count', 0)} board(s) PAES no identificado(s)."
                 )
-                write_audit_log("Actualizar administracion", detail, meta={"result": result, "unknown": unknown})
                 st.session_state["server_admin_last_update"] = detail
-                if not students:
-                    st.warning(
-                        "Trello respondio correctamente, pero no se encontraron boards abiertos con nombre tipo 'PAES Nombre'. "
-                        "Revisa que el token pertenezca al usuario que ve esos boards y que no esten archivados."
-                    )
-                    if unknown:
-                        st.caption("Boards PAES no identificados: " + ", ".join(item.get("board_name", "") for item in unknown[:8]))
                 _rerun_after_success("Alumnos actualizados desde Trello.")
             except Exception as exc:
-                message = f"Error al actualizar alumnos desde Trello: {exc}"
-                write_audit_log("Error actualizar administracion", message, status="error")
-                st.error(message)
+                st.error(f"Error al actualizar alumnos desde Trello: {exc}")
+    with col_b:
+        if st.button("Actualizar resultados Ensayos", use_container_width=True):
+            try:
+                with st.spinner("Leyendo Ensayos en modo solo lectura..."):
+                    _safe_action(config, "/refresh-results", {"force": True})
+                _rerun_after_success("Resultados actualizados desde Trello.")
+            except Exception as exc:
+                st.error(f"Error al actualizar resultados: {exc}")
+
     last_update = st.session_state.get("server_admin_last_update")
     if last_update:
         st.caption(f"Ultima lectura Trello: {last_update}")
-    with col_b:
-        if st.button("Actualizar resultados Ensayos", use_container_width=True):
-            imported, skipped, errors = import_scores(dry_run=False, delay=0.35, limit=None)
-            write_audit_log(
-                "Actualizar resultados",
-                f"Ensayos importados: {imported}. Omitidos: {skipped}. Errores: {errors}.",
-            )
-            _rerun_after_success("Resultados actualizados desde Trello.")
 
 
-def _render_content_editor() -> None:
+def _render_content_editor(config: TrelloConfig) -> None:
     lists = _current_lists()
     list_options = _list_options(lists)
     card_options = _card_options(lists)
 
-    st.subheader("Contenido maestro")
+    st.subheader("Contenido maestro local")
+    st.caption("Estas acciones escriben SQLite local, dejan logs/backups y marcan contenido pendiente para alumnos.")
     col_a, col_b = st.columns(2)
 
     with col_a:
@@ -137,10 +127,11 @@ def _render_content_editor() -> None:
             name = st.text_input("Nueva lista")
             submitted = st.form_submit_button("Crear lista")
         if submitted:
-            backup_database("before_server_create_list")
-            create_master_list(name)
-            write_audit_log("Crear lista", f"Se creo la lista '{name}'.")
-            _rerun_after_success("Lista creada.")
+            try:
+                _safe_action(config, "/create-list", {"name": name})
+                _rerun_after_success("Lista creada.")
+            except Exception as exc:
+                st.error(str(exc))
 
     with col_b:
         if list_options:
@@ -152,16 +143,26 @@ def _render_content_editor() -> None:
                 if confirmation != "ARCHIVAR":
                     st.error("Confirmacion incorrecta.")
                 else:
-                    backup_database("before_server_archive_list")
-                    archive_master_list(list_options[selected])
-                    write_audit_log("Eliminar lista", f"Se archivo la lista '{selected}'.")
-                    _rerun_after_success("Lista archivada.")
+                    try:
+                        _safe_action(config, "/archive-list", {"list_id": list_options[selected], "list_name": selected})
+                        _rerun_after_success("Lista archivada.")
+                    except Exception as exc:
+                        st.error(str(exc))
 
     st.divider()
-    with st.form("server_upsert_card", clear_on_submit=True):
-        selected_list = st.selectbox("Lista destino", list(list_options.keys()) if list_options else [])
-        title = st.text_input("Titulo tarjeta")
-        description = st.text_area("Descripcion", height=100)
+    edit_mode = st.toggle("Editar tarjeta existente", value=False)
+    selected_card_key = ""
+    selected_card = {}
+    if edit_mode and card_options:
+        selected_card_key = st.selectbox("Tarjeta a editar", list(card_options.keys()))
+        selected_card = card_options.get(selected_card_key) or {}
+
+    default_list_name = selected_card.get("list_name") if selected_card else ""
+    default_list_index = list(list_options.keys()).index(default_list_name) if default_list_name in list_options else 0
+    with st.form("server_upsert_card", clear_on_submit=not edit_mode):
+        selected_list = st.selectbox("Lista destino", list(list_options.keys()) if list_options else [], index=default_list_index)
+        title = st.text_input("Titulo tarjeta", value=str(selected_card.get("title") or ""))
+        description = st.text_area("Descripcion", value=str(selected_card.get("description") or ""), height=100)
         links_text = st.text_area("Links", placeholder="Un link por linea", height=80)
         checklist_title = st.text_input("Checklist: titulo opcional")
         checklist_description = st.text_input("Checklist: descripcion opcional")
@@ -183,67 +184,170 @@ def _render_content_editor() -> None:
                         "items": [item for item in [checklist_description.strip(), checklist_link.strip()] if item],
                     }
                 )
-            backup_database("before_server_save_card")
-            upsert_master_card(
-                card_id="",
-                list_id=list_options[selected_list],
-                title=title,
-                description=description,
-                links=[line.strip() for line in links_text.splitlines() if line.strip()],
-                images=[_data_url(item) for item in (image_uploads or [])],
-                files=[_data_url(item) for item in (pdf_uploads or [])],
-                checklists=checklists,
-            )
-            write_audit_log("Guardar tarjeta", f"Se guardo la tarjeta '{title}'.")
-            _rerun_after_success("Tarjeta guardada.")
+            try:
+                _safe_action(
+                    config,
+                    "/save-card",
+                    {
+                        "card_id": selected_card.get("card_id", "") if edit_mode else "",
+                        "list_id": list_options[selected_list],
+                        "list_name": selected_list,
+                        "title": title,
+                        "description": description,
+                        "links": [line.strip() for line in links_text.splitlines() if line.strip()],
+                        "images": [_data_url(item) for item in (image_uploads or [])],
+                        "files": [_data_url(item) for item in (pdf_uploads or [])],
+                        "checklists": checklists,
+                    },
+                )
+                _rerun_after_success("Tarjeta guardada.")
+            except Exception as exc:
+                st.error(str(exc))
 
     if card_options:
         with st.form("server_archive_card"):
-            selected_card = st.selectbox("Archivar tarjeta", list(card_options.keys()))
+            selected_card_to_archive = st.selectbox("Archivar tarjeta", list(card_options.keys()))
             confirmation = st.text_input("Escribe ARCHIVAR para confirmar", key="archive_card_confirmation")
             submitted = st.form_submit_button("Archivar tarjeta")
         if submitted:
             if confirmation != "ARCHIVAR":
                 st.error("Confirmacion incorrecta.")
             else:
-                backup_database("before_server_archive_card")
-                archive_master_card(card_options[selected_card])
-                write_audit_log("Eliminar tarjeta", f"Se archivo la tarjeta '{selected_card}'.")
-                _rerun_after_success("Tarjeta archivada.")
+                try:
+                    selected = card_options[selected_card_to_archive]
+                    _safe_action(
+                        config,
+                        "/archive-card",
+                        {"card_id": selected["card_id"], "card_title": selected_card_to_archive},
+                    )
+                    _rerun_after_success("Tarjeta archivada.")
+                except Exception as exc:
+                    st.error(str(exc))
+
+
+def _render_visibility(config: TrelloConfig) -> None:
+    st.subheader("Visibilidad por alumno")
+    st.caption("Oculta o muestra contenido maestro por alumno. Al sincronizar, no toca Ensayos.")
+    lists = _current_lists()
+    content_options: dict[str, dict[str, str]] = {}
+    for item in lists:
+        list_id = str(item.get("id") or "")
+        list_name = str(item.get("name") or "Lista")
+        content_options[f"Lista / {list_name}"] = {"content_type": "list", "content_id": list_id, "title": list_name}
+        for card in item.get("cards") or []:
+            card_id = str(card.get("id") or "")
+            card_title = str(card.get("title") or "Tarjeta")
+            content_options[f"Tarjeta / {list_name} / {card_title}"] = {
+                "content_type": "card",
+                "content_id": card_id,
+                "title": card_title,
+            }
+    if not content_options:
+        st.info("No hay contenido maestro para configurar.")
+        return
+
+    cohort = _safe_action(config, "/cohort-status", {})
+    students = [item for item in cohort.get("students", []) if item.get("status") == "open"]
+    if not students:
+        st.warning("Primero actualiza alumnos desde Trello.")
+        return
+
+    selected_key = st.selectbox("Contenido", list(content_options.keys()))
+    selected = content_options[selected_key]
+    hidden_result = _safe_action(config, "/visibility-get", selected)
+    hidden_ids = set(hidden_result.get("hidden_student_ids") or [])
+    student_labels = {f"{item.get('initials') or '?'} - {item.get('student_name') or item.get('board_name')}": item for item in students}
+    default_hidden = [label for label, item in student_labels.items() if item.get("board_id") in hidden_ids]
+    hidden_labels = st.multiselect(
+        "Alumnos sin acceso a este contenido",
+        list(student_labels.keys()),
+        default=default_hidden,
+        help="Por defecto todos tienen acceso. Selecciona solo quienes NO deben verlo.",
+    )
+    if st.button("Guardar visibilidad", use_container_width=True):
+        hidden_board_ids = [student_labels[label]["board_id"] for label in hidden_labels]
+        try:
+            _safe_action(
+                config,
+                "/visibility-save",
+                {
+                    **selected,
+                    "students": students,
+                    "hidden_student_ids": hidden_board_ids,
+                    "content_title": selected_key,
+                },
+            )
+            _rerun_after_success("Visibilidad guardada.")
+        except Exception as exc:
+            st.error(str(exc))
 
 
 def _render_sync(config: TrelloConfig) -> None:
     st.subheader("Sincronizacion alumnos")
-    st.caption("Nunca toca la lista Ensayos. Crea backups antes de escribir en Trello.")
-    max_actions = st.number_input("Maximo de acciones", min_value=1, max_value=500, value=200, step=25)
-    col_a, col_b = st.columns(2)
+    st.caption("Reutiliza el mismo planificador local: pendientes, visibilidad, entregas, borrados y backups.")
+    max_actions = st.number_input("Maximo de acciones", min_value=1, max_value=500, value=500, step=25)
+    col_a, col_b, col_c = st.columns(3)
     with col_a:
         if st.button("Vista previa", use_container_width=True):
-            with st.spinner("Leyendo boards PAES..."):
-                plan = build_student_sync_plan(config, load_master_board())
-            st.session_state["server_sync_plan"] = plan
+            try:
+                with st.spinner("Generando plan seguro..."):
+                    plan = _safe_action(config, "/sync-preview-students", {})
+                st.session_state["server_sync_plan"] = plan
+            except Exception as exc:
+                st.error(str(exc))
     with col_b:
         confirmation = st.text_input("Para aplicar escribe SINCRONIZAR")
-        if st.button("Aplicar cambios", use_container_width=True):
-            if confirmation != "SINCRONIZAR":
-                st.error("Confirmacion incorrecta.")
-            else:
-                with st.spinner("Aplicando cambios en Trello..."):
-                    result = apply_student_sync_plan(config, load_master_board(), max_actions=int(max_actions))
-                st.session_state["server_sync_result"] = result
-                st.success(f"Aplicados: {result.get('applied', 0)}. Errores: {len(result.get('errors') or [])}.")
+    with col_c:
+        if st.button("Iniciar sincronizacion", use_container_width=True):
+            try:
+                result = _safe_action(
+                    config,
+                    "/sync-start-students",
+                    {"confirmation": confirmation, "max_actions": int(max_actions)},
+                )
+                st.session_state["server_sync_job_id"] = result.get("job_id")
+                st.success("Sincronizacion iniciada.")
+            except Exception as exc:
+                st.error(str(exc))
+
+    job_id = st.session_state.get("server_sync_job_id")
+    if job_id:
+        if st.button("Actualizar progreso", use_container_width=True):
+            try:
+                st.session_state["server_sync_job"] = _safe_action(config, "/sync-status", {"job_id": job_id})
+            except Exception as exc:
+                st.error(str(exc))
+        job = st.session_state.get("server_sync_job") or _safe_action(config, "/sync-status", {"job_id": job_id})
+        total = int(job.get("total_boards") or 0)
+        completed = int(job.get("completed_boards") or 0)
+        if total:
+            st.progress(min(completed / total, 1.0), text=f"{completed}/{total} boards procesados")
+        st.caption(f"Estado: {job.get('status', 'queued')} - {job.get('note', '')}")
+        progress = job.get("progress") or []
+        if progress:
+            cols = st.columns(6)
+            for idx, item in enumerate(progress[-24:]):
+                status = str(item.get("status") or "")
+                symbol = "OK" if status in {"done", "synced"} else "..." if status == "syncing" else "!"
+                cols[idx % 6].caption(f"{symbol} {item.get('student_name') or item.get('board_id')}")
+        if job.get("status") in {"done", "error"} and job.get("result"):
+            st.session_state["server_sync_result"] = job.get("result")
 
     plan = st.session_state.get("server_sync_plan")
     if plan:
         st.info(f"Vista previa: {len(plan.get('actions') or [])} cambio(s), {len(plan.get('errors') or [])} error(es).")
+        summary = plan.get("summary") or {}
+        if summary:
+            st.json({SAFE_ACTION_LABELS.get(key, key): value for key, value in summary.items()})
         for action in (plan.get("actions") or [])[:25]:
             label = SAFE_ACTION_LABELS.get(action.get("action"), action.get("action"))
-            st.write(f"- **{label}** · {action.get('student_name')} · {action.get('list_name')} / {action.get('card_title')}")
+            st.write(f"- **{label}** ? {action.get('student_name')} ? {action.get('list_name')} / {action.get('card_title')}")
         if len(plan.get("actions") or []) > 25:
             st.caption("Mostrando solo los primeros 25 cambios.")
 
     result = st.session_state.get("server_sync_result")
     if result:
+        st.success(f"Aplicados: {result.get('applied', 0)}. Errores: {len(result.get('errors') or [])}.")
         if result.get("errors"):
             with st.expander("Errores de sincronizacion", expanded=False):
                 st.json(result.get("errors"))
@@ -271,10 +375,12 @@ def render_server_admin_panel(config: TrelloConfig, *, enabled: bool) -> None:
         """
     )
     with st.expander("Panel servidor seguro", expanded=False):
-        tabs = st.tabs(["Administracion", "Contenido", "Sincronizacion"])
+        tabs = st.tabs(["Administracion", "Contenido", "Visibilidad", "Sincronizacion"])
         with tabs[0]:
             _render_trello_admin(config)
         with tabs[1]:
-            _render_content_editor()
+            _render_content_editor(config)
         with tabs[2]:
+            _render_visibility(config)
+        with tabs[3]:
             _render_sync(config)
