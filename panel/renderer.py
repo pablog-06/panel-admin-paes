@@ -3063,14 +3063,10 @@ def build_html_document(
 
     function closeSyncModal() {
         if (syncBusy) {
-            const elapsed = Date.now() - (syncBusyStartedAt || syncLastStateAt);
-            if (elapsed < 45000) {
-                syncNote.textContent = syncMode === "preview"
-                    ? "Cargando vista previa... espera a que termine antes de cerrar."
-                    : "Sincronizando... espera a que termine antes de cerrar esta ventana.";
-                return;
-            }
-            setSyncBusy(false, "Se desbloqueo la ventana por espera prolongada. Puedes cerrar y volver a abrir sincronizacion.");
+            syncNote.textContent = syncMode === "preview"
+                ? "Cargando vista previa... espera a que termine antes de cerrar."
+                : "Sincronizando... espera a que termine antes de cerrar esta ventana.";
+            return;
         }
         if (syncStatusTimer) {
             window.clearTimeout(syncStatusTimer);
@@ -3137,6 +3133,34 @@ def build_html_document(
             </div>
         `).join("");
         syncActionsList.innerHTML = shown + hiddenCount + errorRows;
+    }
+
+    function syncTotalChanges(job, plan = latestSyncPlan) {
+        const actions = plan?.actions || [];
+        return actions.length || Number(job?.result?.planned || 0) || Number(job?.result?.applied || 0) || 0;
+    }
+
+    function syncCompletedChanges(job, plan = latestSyncPlan) {
+        const total = syncTotalChanges(job, plan);
+        const progress = job?.progress || job?.result?.board_results || [];
+        const completed = progress.reduce((sum, item) => {
+            const applied = Number(item?.applied || 0);
+            const errors = Number(item?.errors || 0);
+            return sum + applied + errors;
+        }, 0);
+        if (job?.status === "done" && job?.result) {
+            return Math.min(total || completed, Number(job.result.applied || 0) + Number((job.result.errors || []).length || 0));
+        }
+        return total ? Math.min(completed, total) : completed;
+    }
+
+    function syncProgressText(job, plan = latestSyncPlan) {
+        const total = syncTotalChanges(job, plan);
+        const completed = syncCompletedChanges(job, plan);
+        const width = Math.max(2, String(total || 0).length);
+        const doneText = String(completed).padStart(width, "0");
+        const totalText = total ? String(total).padStart(width, "0") : "??";
+        return `Sincronizando cambios... ${doneText}/${totalText} completados.`;
     }
 
     function updateSyncSummaryFromJob(job, plan = latestSyncPlan) {
@@ -3216,10 +3240,10 @@ def build_html_document(
         }
         previewSyncButton.disabled = isBusy;
         applySyncButton.disabled = isBusy;
-        document.querySelector("#close-sync").disabled = false;
+        document.querySelector("#close-sync").disabled = isBusy;
         previewSyncButton.classList.toggle("is-disabled", isBusy);
         applySyncButton.classList.toggle("is-disabled", isBusy);
-        document.querySelector("#close-sync").classList.toggle("is-disabled", false);
+        document.querySelector("#close-sync").classList.toggle("is-disabled", isBusy);
         syncDialog.classList.toggle("is-syncing", isBusy);
         syncBackdrop.classList.toggle("is-syncing", isBusy);
         if (text) syncNote.textContent = text;
@@ -3279,10 +3303,10 @@ def build_html_document(
         try {
             const total = latestSyncPlan?.actions?.length || 0;
             syncMode = "sync";
-            setSyncBusy(true, `Sincronizando... 0/${total || "?"}`);
+            setSyncBusy(true, syncProgressText({ progress: [] }, latestSyncPlan));
             setSaveStatus("Sincronizando", "saving");
             renderSyncProgress({ progress: [] });
-            syncNote.textContent = `Sincronizando boards... Esta ventana queda bloqueada hasta terminar.`;
+            syncNote.textContent = `${syncProgressText({ progress: [] }, latestSyncPlan)} Esta ventana queda bloqueada hasta terminar.`;
             let result = null;
             try {
                 const started = await callLocalApi("/sync-start-students", {
@@ -3301,9 +3325,7 @@ def build_html_document(
                     await wait(1200);
                     job = await callLocalApi("/sync-status", { job_id: started.job_id });
                     renderSyncProgress(job);
-                    const completed = job.completed_boards || 0;
-                    const totalBoards = job.total_boards || 0;
-                    syncNote.textContent = `Sincronizando boards... ${completed}/${totalBoards || "?"} completados.`;
+                    syncNote.textContent = syncProgressText(job, latestSyncPlan);
                 }
                 renderSyncProgress(job);
                 result = job.result || {};
@@ -4780,10 +4802,8 @@ def build_html_document(
                     setSyncBusy(false, latestJob.note || latestJob.error || "Error de sincronizacion.");
                     setSaveStatus("Error sync", "error");
                 } else {
-                    const completed = latestJob.completed_boards || 0;
-                    const totalBoards = latestJob.total_boards || latestSyncPlan?.students || 0;
                     syncMode = "sync";
-                    setSyncBusy(true, `Sincronizando boards... ${completed}/${totalBoards || "?"} completados.`);
+                    setSyncBusy(true, syncProgressText(latestJob, latestSyncPlan));
                     scheduleSyncStatus(latestJob.job_id || syncActiveJobId);
                 }
             }
@@ -4800,6 +4820,14 @@ def build_html_document(
         applyComponentStateToOpenUi();
     });
 
+    function notifyFrameReady() {
+        window.requestAnimationFrame(() => {
+            window.requestAnimationFrame(() => {
+                window.parent.postMessage({ source: "admin-paes-frame-ready" }, "*");
+            });
+        });
+    }
+
     applyComponentStateToOpenUi();
     renderAuditLog(localAuditEvents());
     setAuditDebug(`JS listo ${new Date().toLocaleTimeString("es-CL")}`);
@@ -4807,6 +4835,7 @@ def build_html_document(
     window.setInterval(refreshAuditLog, 60000);
     window.setTimeout(() => refreshResultsPanel(false), 8000);
     window.setInterval(() => refreshResultsPanel(false), 600000);
+    window.setTimeout(notifyFrameReady, 80);
 </script>
 </body>
 </html>
@@ -4845,4 +4874,3 @@ def build_html_document(
     for token, value in replacements.items():
         document = document.replace(token, value)
     return document
-

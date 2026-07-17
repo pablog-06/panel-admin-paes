@@ -7,6 +7,43 @@ import streamlit.components.v1 as components
 BOARD_ACTION_COMPONENT_JS = r"""
 export default function(component) {
     const { data, setTriggerValue, parentElement } = component;
+    parentElement.style.position = 'relative';
+    let overlay = parentElement.querySelector('#paes-board-loading-overlay');
+    if (!overlay) {
+        overlay = document.createElement('div');
+        overlay.id = 'paes-board-loading-overlay';
+        overlay.innerHTML = `
+            <section class="paes-board-loading-card">
+                <div class="paes-board-loading-mark">[]</div>
+                <h1>Panel PAES</h1>
+                <p>Cargando tablero y estado del servidor...</p>
+                <div class="paes-board-loading-bar"></div>
+            </section>
+        `;
+        overlay.style.cssText = `
+            position:absolute; inset:0; z-index:20; min-height:1080px;
+            display:grid; place-items:center;
+            background: radial-gradient(circle at 18% 10%, rgba(255,255,255,.96), transparent 28%),
+                        radial-gradient(circle at 85% 5%, rgba(32,199,189,.20), transparent 24%),
+                        radial-gradient(circle at 58% 92%, rgba(0,122,255,.16), transparent 28%),
+                        linear-gradient(135deg, #fbfdff 0%, #f1f8ff 45%, #edfdfb 100%);
+            transition: opacity .22s ease;
+            font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;
+        `;
+        const style = document.createElement('style');
+        style.textContent = `
+            #paes-board-loading-overlay.is-hidden { opacity:0; pointer-events:none; }
+            .paes-board-loading-card { width:min(420px, calc(100vw - 40px)); padding:26px; border:1px solid rgba(255,255,255,.82); border-radius:26px; background:rgba(255,255,255,.72); box-shadow:0 28px 90px rgba(28,43,61,.14); backdrop-filter:blur(28px) saturate(160%); }
+            .paes-board-loading-mark { width:38px; height:38px; display:grid; place-items:center; border-radius:14px; color:#0b66c3; background:rgba(232,246,255,.92); margin-bottom:14px; }
+            .paes-board-loading-card h1 { margin:0; color:#182230; font-size:20px; font-weight:560; letter-spacing:0; }
+            .paes-board-loading-card p { margin:8px 0 18px; color:#607587; font-size:13px; line-height:1.45; }
+            .paes-board-loading-bar { position:relative; height:7px; overflow:hidden; border-radius:999px; background:rgba(210,230,242,.88); }
+            .paes-board-loading-bar::after { content:""; position:absolute; inset:0; width:42%; border-radius:inherit; background:linear-gradient(90deg,#35c5bd,#0a84ff); animation:paes-board-loading-slide 1.25s ease-in-out infinite; }
+            @keyframes paes-board-loading-slide { 0%{transform:translateX(-110%)} 50%{transform:translateX(80%)} 100%{transform:translateX(250%)} }
+        `;
+        parentElement.appendChild(style);
+        parentElement.appendChild(overlay);
+    }
     let frame = parentElement.querySelector('#paes-board-action-frame');
     if (!frame) {
         frame = document.createElement('iframe');
@@ -24,10 +61,11 @@ export default function(component) {
     const version = data?.version || '';
     const stateRev = data?.state_rev || 0;
     const marker = `${version}:${data?.reload_key || 0}`;
-    if (frame.dataset.marker !== marker) {
-        frame.dataset.marker = marker;
-        frame.srcdoc = html;
-    }
+    let awaitingFrameReady = false;
+    const hideOverlay = () => {
+        awaitingFrameReady = false;
+        overlay.classList.add('is-hidden');
+    };
 
     const sendState = () => {
         if (!frame.contentWindow) return;
@@ -37,18 +75,34 @@ export default function(component) {
             state_rev: stateRev,
         }, '*');
     };
-    if (frame.contentWindow) {
-        window.setTimeout(sendState, 80);
-        window.setTimeout(sendState, 500);
-    }
 
     const handler = (event) => {
         if (event.source !== frame.contentWindow) return;
         const message = event.data || {};
+        if (message.source === 'admin-paes-frame-ready') {
+            hideOverlay();
+            return;
+        }
         if (message.source !== 'admin-paes-component-action') return;
         setTriggerValue('action', message.action || {});
     };
     window.addEventListener('message', handler);
+
+    frame.onload = () => {
+        window.setTimeout(sendState, 80);
+        window.setTimeout(sendState, 500);
+        if (awaitingFrameReady) window.setTimeout(hideOverlay, 2400);
+    };
+
+    if (frame.dataset.marker !== marker) {
+        awaitingFrameReady = true;
+        overlay.classList.remove('is-hidden');
+        frame.dataset.marker = marker;
+        frame.srcdoc = html;
+    } else if (frame.contentWindow) {
+        window.setTimeout(sendState, 80);
+    }
+
     return () => window.removeEventListener('message', handler);
 }
 """
@@ -188,7 +242,7 @@ def render_loading_screen(version: str) -> None:
         </style>
         <div id="paes-loading-screen">
             <section class="paes-loading-card">
-                <div class="paes-loading-mark">▦</div>
+                <div class="paes-loading-mark">[]</div>
                 <h1>Cargando panel PAES</h1>
                 <p>Preparando tablero maestro, historial y resultados locales. La sincronizacion pesada se ejecuta despues de mostrar la interfaz.</p>
                 <div class="paes-loading-bar"></div>

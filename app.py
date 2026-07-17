@@ -37,7 +37,7 @@ from panel.streamlit_shell import configure_page, hide_streamlit_chrome, render_
 from panel.trello_client import TrelloConfig
 
 
-APP_VERSION = "v-etapa6-visibility-open-1"
+APP_VERSION = "v-etapa6-sync-count-load-2"
 LOCAL_API_PORT = 8771
 
 
@@ -53,7 +53,7 @@ def _bool_secret_or_env(name: str, default: bool = False) -> bool:
     value = _secret_or_env(name)
     if not value:
         return default
-    return value.lower() in {"1", "true", "yes", "on", "si", "sÃ­"}
+    return value.lower() in {"1", "true", "yes", "on", "si"}
 
 
 def trello_config() -> TrelloConfig:
@@ -129,9 +129,6 @@ def main() -> None:
         raise
 
     if loading is not None:
-        remaining = 2.0 - (time.perf_counter() - loading_started_at)
-        if remaining > 0:
-            time.sleep(remaining)
         loading.empty()
         st.session_state["paes_board_ready_version"] = APP_VERSION
     visual_action_results = st.session_state.setdefault("visual_action_results", {})
@@ -218,4 +215,3 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
-
