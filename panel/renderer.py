@@ -2592,6 +2592,7 @@ def build_html_document(
     let syncBusyStartedAt = 0;
     let syncStatusTimer = null;
     let syncActiveJobId = "";
+    let lastComponentStateRev = null;
 
     function renderAdminChart(series = []) {
         if (!adminChart) return;
@@ -2902,6 +2903,9 @@ def build_html_document(
         }
         if (path === "/student-boards") {
             return COMPONENT_STATE["/student-boards"]?.result || { students: [] };
+        }
+        if (path === "/visibility-open") {
+            return COMPONENT_STATE["/visibility-open"]?.result || { students: [], hidden_student_ids: [], component_pending: true };
         }
         if (path === "/visibility-get") {
             return COMPONENT_STATE["/visibility-get"]?.result || { hidden_student_ids: [], component_pending: true };
@@ -3237,7 +3241,7 @@ def build_html_document(
                 setSyncBusy(false);
                 setSaveStatus("Error sync", "error");
             });
-        }, 1200);
+        }, 2600);
     }
 
     async function previewStudentSync() {
@@ -3376,11 +3380,15 @@ def build_html_document(
         visibilityBackdrop.classList.add("is-open");
         visibilityDialog.classList.add("is-open");
         try {
-            await loadStudentBoards();
-            const result = await callLocalApi("/visibility-get", {
+            const result = await callLocalApi("/visibility-open", {
                 content_type: contentType,
                 content_id: contentId,
             });
+            if (result?.component_pending) {
+                visibilityStatus.textContent = "Cargando alumnos desde el servidor...";
+                return;
+            }
+            studentBoards = Array.isArray(result?.students) ? result.students : [];
             hiddenStudentIds = new Set(result?.hidden_student_ids || []);
             renderStudentGrid();
         } catch (error) {
@@ -4703,25 +4711,26 @@ def build_html_document(
             if (cachedAdmin?.ok) renderAdminDashboard(cachedAdmin.result);
         }
         if (ui.screen === "visibility" || visibilityDialog.classList.contains("is-open")) {
+            const openResult = COMPONENT_STATE["/visibility-open"];
             const studentsResult = COMPONENT_STATE["/student-boards"];
-            if (studentsResult?.ok) {
-                const incomingStudents = Array.isArray(studentsResult.result?.students) ? studentsResult.result.students : [];
-                if (incomingStudents.length || !studentBoards) {
-                    studentBoards = incomingStudents;
-                }
-            }
-            const visibilityResult = COMPONENT_STATE["/visibility-get"];
-            if (activeVisibilityTarget && visibilityResult?.ok) {
-                const result = visibilityResult.result || {};
+            let visibilityHadError = false;
+            if (openResult?.error && visibilityDialog.classList.contains("is-open")) {
+                visibilityHadError = true;
+                visibilityStatus.textContent = "No se pudo cargar alumnos";
+                visibilityGrid.innerHTML = `<p class="visibility-status">${escapeHtml(openResult.error)}</p>`;
+            } else if (openResult?.ok && activeVisibilityTarget) {
+                const result = openResult.result || {};
                 const sameTarget = String(result.content_type || "") === activeVisibilityTarget.contentType
                     && String(result.content_id || "") === activeVisibilityTarget.contentId;
                 if (sameTarget) {
+                    studentBoards = Array.isArray(result.students) ? result.students : [];
                     hiddenStudentIds = new Set(result.hidden_student_ids || []);
                 }
+            } else if (studentsResult?.ok) {
+                const incomingStudents = Array.isArray(studentsResult.result?.students) ? studentsResult.result.students : [];
+                if (incomingStudents.length || !studentBoards) studentBoards = incomingStudents;
             }
-            if (visibilityDialog.classList.contains("is-open")) {
-                renderStudentGrid();
-            }
+            if (!visibilityHadError && visibilityDialog.classList.contains("is-open")) renderStudentGrid();
         }
         if (ui.screen === "sync" || syncDialog.classList.contains("is-open")) {
             syncBackdrop.classList.add("is-open");
@@ -4784,6 +4793,9 @@ def build_html_document(
     window.addEventListener("message", (event) => {
         const message = event.data || {};
         if (message.source !== "admin-paes-component-state") return;
+        const incomingRev = message.state_rev ?? message.state?.__state_rev ?? 0;
+        if (incomingRev === lastComponentStateRev) return;
+        lastComponentStateRev = incomingRev;
         COMPONENT_STATE = message.state || {};
         applyComponentStateToOpenUi();
     });

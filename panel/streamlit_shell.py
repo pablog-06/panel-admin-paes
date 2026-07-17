@@ -39,9 +39,7 @@ export default function(component) {
     };
     if (frame.contentWindow) {
         window.setTimeout(sendState, 80);
-        window.setTimeout(sendState, 250);
-        window.setTimeout(sendState, 700);
-        window.setTimeout(sendState, 1300);
+        window.setTimeout(sendState, 500);
     }
 
     const handler = (event) => {

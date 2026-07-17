@@ -282,6 +282,16 @@ def execute_admin_action(path: str, payload: dict[str, Any] | None, config: Trel
         )
         return {"summary": summary, "cohort": load_cohort_status()}
 
+    if path == "/visibility-open":
+        content_type = _payload_text(payload, "content_type")
+        content_id = _payload_text(payload, "content_id")
+        return {
+            "content_type": content_type,
+            "content_id": content_id,
+            "students": fetch_student_boards_read_only(config),
+            "hidden_student_ids": sorted(hidden_student_board_ids(content_type, content_id)),
+        }
+
     if path == "/visibility-get":
         content_type = _payload_text(payload, "content_type")
         content_id = _payload_text(payload, "content_id")
