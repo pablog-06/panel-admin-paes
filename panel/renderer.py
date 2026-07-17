@@ -2587,6 +2587,10 @@ def build_html_document(
     let hiddenStudentIds = new Set();
     let latestSyncPlan = null;
     let syncBusy = false;
+    let syncMode = "idle";
+    let syncLastStateAt = Date.now();
+    let syncStatusTimer = null;
+    let syncActiveJobId = "";
 
     function renderAdminChart(series = []) {
         if (!adminChart) return;
@@ -3038,17 +3042,34 @@ def build_html_document(
 
     function openSyncModal() {
         latestSyncPlan = null;
+        syncMode = "idle";
+        syncActiveJobId = "";
+        if (syncStatusTimer) {
+            window.clearTimeout(syncStatusTimer);
+            syncStatusTimer = null;
+        }
         syncConfirmation.value = "";
         syncNote.textContent = "Genera una vista previa. Solo apareceran contenidos nuevos marcados como pendientes desde este panel.";
         renderSyncPlan(null);
+        setSyncBusy(false);
         syncBackdrop.classList.add("is-open");
         syncDialog.classList.add("is-open");
     }
 
     function closeSyncModal() {
         if (syncBusy) {
-            syncNote.textContent = "Sincronizando... espera a que termine antes de cerrar esta ventana.";
-            return;
+            const elapsed = Date.now() - syncLastStateAt;
+            if (elapsed < 45000) {
+                syncNote.textContent = syncMode === "preview"
+                    ? "Cargando vista previa... espera a que termine antes de cerrar."
+                    : "Sincronizando... espera a que termine antes de cerrar esta ventana.";
+                return;
+            }
+            setSyncBusy(false, "Se desbloqueo la ventana por espera prolongada. Puedes cerrar y volver a abrir sincronizacion.");
+        }
+        if (syncStatusTimer) {
+            window.clearTimeout(syncStatusTimer);
+            syncStatusTimer = null;
         }
         syncBackdrop.classList.remove("is-open");
         syncDialog.classList.remove("is-open");
@@ -3171,19 +3192,40 @@ def build_html_document(
 
     function setSyncBusy(isBusy, text = "") {
         syncBusy = isBusy;
+        if (isBusy) syncLastStateAt = Date.now();
         previewSyncButton.disabled = isBusy;
         applySyncButton.disabled = isBusy;
-        document.querySelector("#close-sync").disabled = isBusy;
+        document.querySelector("#close-sync").disabled = false;
         previewSyncButton.classList.toggle("is-disabled", isBusy);
         applySyncButton.classList.toggle("is-disabled", isBusy);
-        document.querySelector("#close-sync").classList.toggle("is-disabled", isBusy);
+        document.querySelector("#close-sync").classList.toggle("is-disabled", false);
         syncDialog.classList.toggle("is-syncing", isBusy);
         syncBackdrop.classList.toggle("is-syncing", isBusy);
         if (text) syncNote.textContent = text;
     }
 
+    function scheduleSyncStatus(jobId) {
+        if (!COMPONENT_MODE || !jobId) return;
+        syncActiveJobId = jobId;
+        if (syncStatusTimer) {
+            window.clearTimeout(syncStatusTimer);
+            syncStatusTimer = null;
+        }
+        syncStatusTimer = window.setTimeout(() => {
+            syncStatusTimer = null;
+            if (!syncDialog.classList.contains("is-open")) return;
+            callLocalApi("/sync-status", { job_id: jobId }).catch((error) => {
+                syncMode = "error";
+                syncNote.textContent = error.message;
+                setSyncBusy(false);
+                setSaveStatus("Error sync", "error");
+            });
+        }, 1200);
+    }
+
     async function previewStudentSync() {
         try {
+            syncMode = "preview";
             setSyncBusy(true, "Preparando vista previa...");
             setSaveStatus("Comparando", "saving");
             syncNote.textContent = "Leyendo boards PAES y buscando contenido nuevo pendiente...";
@@ -3201,7 +3243,8 @@ def build_html_document(
             setSaveStatus("Error sync", "error");
             renderSyncPlan({ students: 0, actions: [], errors: [{ error: error.message }] });
         } finally {
-            if (!(COMPONENT_MODE && syncNote.textContent.includes("Sincronizacion enviada al servidor"))) {
+            if (!(COMPONENT_MODE && syncNote.textContent.includes("Vista previa enviada al servidor"))) {
+                syncMode = "idle";
                 setSyncBusy(false);
             }
         }
@@ -3214,6 +3257,7 @@ def build_html_document(
         }
         try {
             const total = latestSyncPlan?.actions?.length || 0;
+            syncMode = "sync";
             setSyncBusy(true, `Sincronizando... 0/${total || "?"}`);
             setSaveStatus("Sincronizando", "saving");
             renderSyncProgress({ progress: [] });
@@ -3225,7 +3269,9 @@ def build_html_document(
                     max_actions: Math.max(total, 500),
                 });
                 if (COMPONENT_MODE) {
+                    syncActiveJobId = started?.job_id || "";
                     syncNote.textContent = "Sincronizacion iniciada en servidor. Se actualizaran los checks progresivamente.";
+                    scheduleSyncStatus(syncActiveJobId);
                     return;
                 }
                 const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
@@ -3265,6 +3311,7 @@ def build_html_document(
             refreshAuditLog();
         } finally {
             if (!(COMPONENT_MODE && syncNote.textContent.includes("Sincronizacion iniciada en servidor"))) {
+                syncMode = "idle";
                 setSyncBusy(false);
             }
         }
@@ -4642,15 +4689,24 @@ def build_html_document(
             syncBackdrop.classList.add("is-open");
             syncDialog.classList.add("is-open");
             const planResult = COMPONENT_STATE["/sync-preview-students"];
-            if (planResult?.ok) {
-                latestSyncPlan = planResult.result;
-                renderSyncPlan(latestSyncPlan);
-                syncNote.textContent = "Vista previa lista. Revisa el contenido antes de aplicar.";
-            }
             const startResult = COMPONENT_STATE["/sync-start-students"];
             const statusResult = COMPONENT_STATE["/sync-status"];
             const latestJob = statusResult?.ok ? statusResult.result : startResult?.ok ? startResult.result : null;
+            if (planResult?.ok && (!latestJob || syncMode === "preview")) {
+                latestSyncPlan = planResult.result;
+                renderSyncPlan(latestSyncPlan);
+                syncMode = "idle";
+                setSyncBusy(false, "Vista previa lista. Revisa el contenido antes de aplicar.");
+                setSaveStatus("Plan listo");
+            } else if (planResult?.error && syncMode === "preview") {
+                latestSyncPlan = null;
+                renderSyncPlan({ students: 0, actions: [], errors: [{ error: planResult.error }] });
+                syncMode = "error";
+                setSyncBusy(false, planResult.error);
+                setSaveStatus("Error sync", "error");
+            }
             if (latestJob) {
+                if (latestJob.job_id) syncActiveJobId = latestJob.job_id;
                 const finishedResult = latestJob.result || null;
                 const jobForRender = finishedResult
                     ? { ...latestJob, progress: finishedResult.board_results || latestJob.progress || [] }
@@ -4658,28 +4714,30 @@ def build_html_document(
                 renderSyncProgress(jobForRender, latestSyncPlan);
                 const status = latestJob.status || "queued";
                 if (status === "done") {
+                    if (syncStatusTimer) {
+                        window.clearTimeout(syncStatusTimer);
+                        syncStatusTimer = null;
+                    }
                     const planned = finishedResult?.planned || latestSyncPlan?.actions?.length || 0;
                     const applied = finishedResult?.applied || 0;
-                    syncNote.textContent = `Sincronizacion lista: ${applied}/${planned} aplicado(s). Backups creados: ${(finishedResult?.backups || []).length}.`;
-                    setSyncBusy(false);
+                    syncMode = "done";
+                    setSyncBusy(false, `Sincronizacion lista: ${applied}/${planned} aplicado(s). Backups creados: ${(finishedResult?.backups || []).length}.`);
                     setSaveStatus("Sincronizado");
+                    refreshAuditLog();
                 } else if (status === "error") {
-                    syncNote.textContent = latestJob.note || latestJob.error || "Error de sincronizacion.";
-                    setSyncBusy(false);
+                    if (syncStatusTimer) {
+                        window.clearTimeout(syncStatusTimer);
+                        syncStatusTimer = null;
+                    }
+                    syncMode = "error";
+                    setSyncBusy(false, latestJob.note || latestJob.error || "Error de sincronizacion.");
                     setSaveStatus("Error sync", "error");
                 } else {
                     const completed = latestJob.completed_boards || 0;
                     const totalBoards = latestJob.total_boards || latestSyncPlan?.students || 0;
-                    syncNote.textContent = `Sincronizando boards... ${completed}/${totalBoards || "?"} completados.`;
-                    setSyncBusy(true, syncNote.textContent);
-                    if (latestJob.job_id) {
-                        window.setTimeout(() => {
-                            callLocalApi("/sync-status", { job_id: latestJob.job_id }).catch((error) => {
-                                syncNote.textContent = error.message;
-                                setSyncBusy(false);
-                            });
-                        }, 1500);
-                    }
+                    syncMode = "sync";
+                    setSyncBusy(true, `Sincronizando boards... ${completed}/${totalBoards || "?"} completados.`);
+                    scheduleSyncStatus(latestJob.job_id || syncActiveJobId);
                 }
             }
         }
@@ -4737,3 +4795,4 @@ def build_html_document(
     for token, value in replacements.items():
         document = document.replace(token, value)
     return document
+
