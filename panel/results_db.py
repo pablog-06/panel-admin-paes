@@ -1385,6 +1385,122 @@ def latest_exam_ranking(db_path: Path = DB_PATH) -> list[dict[str, Any]]:
         for row in rows
     ]
 
+def _readonly_db_path(db_path: Path = DB_PATH) -> Path | None:
+    if db_path.exists():
+        return db_path
+    if db_path == DB_PATH and LEGACY_DB_PATH.exists():
+        return LEGACY_DB_PATH
+    return None
+
+
+def _exam_number(essay_name: str) -> int | None:
+    exam_number, _ = essay_sort_key(essay_name)
+    return exam_number if exam_number >= 0 else None
+
+
+def _linear_regression_slope(points: list[tuple[int, int]]) -> float | None:
+    if len(points) < 2:
+        return None
+    xs = [float(point[0]) for point in points]
+    ys = [float(point[1]) for point in points]
+    mean_x = sum(xs) / len(xs)
+    mean_y = sum(ys) / len(ys)
+    denominator = sum((x - mean_x) ** 2 for x in xs)
+    if denominator == 0:
+        return None
+    numerator = sum((x - mean_x) * (y - mean_y) for x, y in zip(xs, ys))
+    return numerator / denominator
+
+
+def build_performance_table(db_path: Path = DB_PATH) -> dict[str, Any]:
+    """Read-only performance table for the admin panel."""
+    readonly_path = _readonly_db_path(db_path)
+    if readonly_path is None:
+        return {"essay_numbers": [], "rows": [], "student_count": 0, "exam_count": 0}
+
+    uri = f"file:{readonly_path.as_posix()}?mode=ro"
+    try:
+        connection = sqlite3.connect(uri, uri=True)
+    except sqlite3.Error:
+        return {"essay_numbers": [], "rows": [], "student_count": 0, "exam_count": 0}
+
+    connection.row_factory = sqlite3.Row
+    try:
+        table_rows = connection.execute(
+            """
+            SELECT name
+            FROM sqlite_master
+            WHERE type = 'table' AND name IN ('students', 'essay_scores')
+            """
+        ).fetchall()
+        if {str(row["name"]) for row in table_rows} != {"students", "essay_scores"}:
+            return {"essay_numbers": [], "rows": [], "student_count": 0, "exam_count": 0}
+        rows = connection.execute(
+            """
+            SELECT
+                students.name_hash,
+                students.name_encrypted AS student_name_encrypted,
+                essay_scores.essay_name,
+                essay_scores.score,
+                essay_scores.updated_at,
+                essay_scores.observed_at
+            FROM essay_scores
+            JOIN students ON students.id = essay_scores.student_id
+            ORDER BY students.name_hash ASC, essay_scores.updated_at ASC, essay_scores.observed_at ASC
+            """
+        ).fetchall()
+    finally:
+        connection.close()
+
+    by_student: dict[str, dict[str, Any]] = {}
+    essay_numbers: set[int] = set()
+    for row in rows:
+        exam_number = _exam_number(str(row["essay_name"] or ""))
+        if exam_number is None:
+            continue
+        name_hash = str(row["name_hash"] or "")
+        if not name_hash:
+            continue
+        student = by_student.setdefault(
+            name_hash,
+            {"student": _decrypt_student_name(row), "scores": {}},
+        )
+        score = int(row["score"])
+        student["scores"][exam_number] = score
+        essay_numbers.add(exam_number)
+
+    ordered_exam_numbers = list(range(1, max(essay_numbers) + 1)) if essay_numbers else []
+    performance_rows: list[dict[str, Any]] = []
+    for student in by_student.values():
+        scores: dict[int, int] = dict(student["scores"])
+        points = sorted(scores.items())
+        if not points:
+            continue
+        latest_exam, latest_score = points[-1]
+        average = sum(score for _, score in points) / len(points)
+        slope = _linear_regression_slope(points)
+        performance_rows.append(
+            {
+                "student": student["student"],
+                "scores": {str(exam): score for exam, score in sorted(scores.items())},
+                "latest_exam": latest_exam,
+                "latest_score": latest_score,
+                "average": round(average, 1),
+                "trend_value": None if slope is None else round(slope, 2),
+                "trend": "Datos insuficientes" if slope is None else f"{slope:+.1f} pts/ensayo",
+                "available_scores": len(points),
+            }
+        )
+
+    performance_rows.sort(key=lambda item: str(item["student"]).casefold())
+    return {
+        "essay_numbers": ordered_exam_numbers,
+        "rows": performance_rows,
+        "student_count": len(performance_rows),
+        "exam_count": len(ordered_exam_numbers),
+    }
+
+
 def median_scores_by_exam(db_path: Path = DB_PATH) -> list[dict[str, Any]]:
     initialize_database(db_path)
     with database(db_path) as connection:

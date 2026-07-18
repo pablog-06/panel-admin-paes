@@ -37,7 +37,7 @@ from panel.streamlit_shell import configure_page, hide_streamlit_chrome, render_
 from panel.trello_client import TrelloConfig
 
 
-APP_VERSION = "v-etapa6-results-ranking-1"
+APP_VERSION = "v-etapa6-performance-1"
 LOCAL_API_PORT = 8771
 
 
@@ -98,6 +98,7 @@ def main() -> None:
         migrate_queued_content_to_master()
         import_summary = bootstrap_master_if_empty(config)
         board_title = "Panel PAES"
+        performance_table = _results_db.build_performance_table()
         board_lists = [build_results_panel(), *load_master_board()]
         component_action_mode = bool(disable_local_api and config.is_complete)
         read_only = False if component_action_mode else bool(disable_local_api)
@@ -149,6 +150,7 @@ def main() -> None:
         trello_api_base=trello_api_base,
         trello_api_token=trello_api_token,
         component_state=visual_action_results,
+        performance_table=performance_table,
     )
     component_result = render_component(
         html_document,

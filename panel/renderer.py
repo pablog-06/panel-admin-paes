@@ -1,4 +1,4 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 import html
 import json
@@ -308,9 +308,11 @@ def build_html_document(
     trello_api_base: str = "",
     trello_api_token: str = "",
     component_state: dict[str, Any] | None = None,
+    performance_table: dict[str, Any] | None = None,
 ) -> str:
     data_json = json.dumps(lists, ensure_ascii=True)
     component_state_json = json.dumps(component_state or {}, ensure_ascii=True)
+    performance_json = json.dumps(performance_table or {"essay_numbers": [], "rows": []}, ensure_ascii=True)
     lists_html = "".join(render_list(board_list, read_only=read_only) for board_list in lists)
     readonly_class = " is-read-only" if read_only else ""
     trello_class = " is-trello-edit" if trello_api_base else ""
@@ -778,6 +780,126 @@ def build_html_document(
 
     .admin-page.is-open {
         display: flex;
+    }
+
+    .performance-page {
+        position: fixed;
+        inset: 66px 0 0;
+        z-index: 61;
+        display: none;
+        flex-direction: column;
+        padding: 22px;
+        overflow: hidden;
+        background:
+            radial-gradient(circle at 78% 12%, rgba(60, 220, 205, .22), transparent 34%),
+            radial-gradient(circle at 52% 92%, rgba(0, 122, 255, .18), transparent 34%),
+            linear-gradient(135deg, #f8fcff 0%, #eef8ff 46%, #e9fffb 100%);
+    }
+
+    .performance-page.is-open {
+        display: flex;
+    }
+
+    .performance-card {
+        display: flex;
+        flex: 1;
+        min-height: 0;
+        flex-direction: column;
+        border: 1px solid rgba(255,255,255,.78);
+        border-radius: var(--radius-lg);
+        background: rgba(255,255,255,.86);
+        box-shadow: var(--shadow);
+        backdrop-filter: blur(26px) saturate(160%);
+        overflow: hidden;
+    }
+
+    .performance-toolbar {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 12px;
+        padding: 14px 16px;
+        border-bottom: 1px solid rgba(190,225,238,.72);
+        color: var(--secondary);
+        font-size: 12.5px;
+    }
+
+    .performance-table-scroll {
+        flex: 1;
+        min-height: 0;
+        overflow: auto;
+        overscroll-behavior: contain;
+    }
+
+    .performance-table {
+        width: max-content;
+        min-width: 100%;
+        border-collapse: separate;
+        border-spacing: 0;
+        color: #1d3344;
+        font-size: 13px;
+    }
+
+    .performance-table th,
+    .performance-table td {
+        min-width: 118px;
+        padding: 12px 14px;
+        border-bottom: 1px solid rgba(190,225,238,.62);
+        background: rgba(255,255,255,.74);
+        text-align: right;
+        white-space: nowrap;
+    }
+
+    .performance-table th {
+        position: sticky;
+        top: 0;
+        z-index: 2;
+        color: #345b75;
+        background: rgba(240,249,255,.96);
+        font-weight: 560;
+        cursor: pointer;
+        user-select: none;
+    }
+
+    .performance-table th:first-child,
+    .performance-table td:first-child {
+        position: sticky;
+        left: 0;
+        z-index: 3;
+        min-width: 210px;
+        text-align: left;
+        box-shadow: 8px 0 18px rgba(31, 81, 111, .06);
+    }
+
+    .performance-table th:first-child {
+        z-index: 4;
+    }
+
+    .performance-table tbody tr:hover td {
+        background: rgba(234,248,255,.92);
+    }
+
+    .performance-table .muted-cell {
+        color: #8aa0b2;
+    }
+
+    .performance-table .trend-positive {
+        color: #087f5b;
+    }
+
+    .performance-table .trend-negative {
+        color: #b42318;
+    }
+
+    .performance-sort-indicator {
+        margin-left: 6px;
+        color: #0a84ff;
+        font-size: 10px;
+    }
+
+    .performance-empty {
+        padding: 26px;
+        color: var(--secondary);
     }
 
     .admin-page-header {
@@ -2353,6 +2475,7 @@ def build_html_document(
                 <span class="save-status" id="save-status">Guardado</span>
                 <button class="secondary-button" type="button" id="logout-panel">__ICON_CLOSE__<span>Cerrar sesion</span></button>
                 <button class="secondary-button" type="button" id="open-admin-page">__ICON_BOARD__<span>Administracion</span></button>
+                <button class="secondary-button" type="button" id="open-performance-page">__ICON_STATS__<span>Rendimiento</span></button>
                 <button class="secondary-button" type="button" id="open-sync">__ICON_USERS__<span>Sincronizar alumnos</span></button>
                 <button class="secondary-button" type="button" id="add-list-top">__ICON_ADD__<span>Nueva lista</span></button>
                 <button class="primary-button" type="button" id="open-new-card">__ICON_CARD__<span>Nueva tarjeta</span></button>
@@ -2426,6 +2549,24 @@ def build_html_document(
                     </div>
                     <div class="admin-history-list" id="admin-history-list"></div>
                 </section>
+            </div>
+        </section>
+        <section class="performance-page" id="performance-page" aria-label="Rendimiento de alumnos">
+            <div class="admin-page-header">
+                <div>
+                    <h2>Rendimiento</h2>
+                    <p>Tabla solo lectura desde SQLite. Ensayos sin puntaje aparecen como "-".</p>
+                </div>
+                <button class="secondary-button" type="button" id="close-performance-page">__ICON_CLOSE__<span>Volver</span></button>
+            </div>
+            <div class="performance-card">
+                <div class="performance-toolbar">
+                    <span id="performance-summary">Cargando rendimiento...</span>
+                    <span>Click en una columna para ordenar</span>
+                </div>
+                <div class="performance-table-scroll" id="performance-table-scroll">
+                    <div class="performance-empty">Sin datos de rendimiento cargados.</div>
+                </div>
             </div>
         </section>
         <aside class="drawer" id="drawer" aria-label="Editor de tarjeta">
@@ -2610,6 +2751,7 @@ def build_html_document(
     const STORAGE_KEY = "admin-paes-board-state-v1";
     const AUDIT_STORAGE_KEY = "admin-paes-audit-events-v1";
     const defaultBoardData = __DATA_JSON__;
+    const performanceData = __PERFORMANCE_JSON__;
     let boardData = (READ_ONLY || TRELLO_MODE) ? defaultBoardData : loadBoardData(defaultBoardData);
     let pendingCloseListId = null;
     let attachedImages = [];
@@ -2637,6 +2779,9 @@ def build_html_document(
     const adminAvatarGrid = document.querySelector("#admin-avatar-grid");
     const adminHistoryList = document.querySelector("#admin-history-list");
     const adminChart = document.querySelector("#admin-chart");
+    const performancePage = document.querySelector("#performance-page");
+    const performanceSummary = document.querySelector("#performance-summary");
+    const performanceTableScroll = document.querySelector("#performance-table-scroll");
     const checklistsRoot = document.querySelector("#checklists");
     const editingCardId = document.querySelector("#editing-card-id");
     const optionPanels = [...document.querySelectorAll(".option-panel")];
@@ -2679,6 +2824,115 @@ def build_html_document(
     let syncStatusTimer = null;
     let syncActiveJobId = "";
     let lastComponentStateRev = null;
+
+    let performanceSort = { key: "student", direction: "asc" };
+
+    function performanceSortValue(row, key) {
+        if (key === "student") return String(row.student || "").toLocaleLowerCase("es-CL");
+        if (key === "latest_score") return Number(row.latest_score ?? Number.NEGATIVE_INFINITY);
+        if (key === "average") return Number(row.average ?? Number.NEGATIVE_INFINITY);
+        if (key === "trend_value") {
+            return row.trend_value === null || row.trend_value === undefined
+                ? Number.NEGATIVE_INFINITY
+                : Number(row.trend_value);
+        }
+        if (key.startsWith("essay_")) {
+            const exam = key.replace("essay_", "");
+            const value = row.scores?.[exam];
+            return value === null || value === undefined ? Number.NEGATIVE_INFINITY : Number(value);
+        }
+        return "";
+    }
+
+    function comparePerformanceRows(a, b) {
+        const key = performanceSort.key;
+        const aValue = performanceSortValue(a, key);
+        const bValue = performanceSortValue(b, key);
+        let result = 0;
+        if (typeof aValue === "string" || typeof bValue === "string") {
+            result = String(aValue).localeCompare(String(bValue), "es-CL", { sensitivity: "base" });
+        } else {
+            result = Number(aValue) - Number(bValue);
+        }
+        return performanceSort.direction === "asc" ? result : -result;
+    }
+
+    function trendClass(row) {
+        const value = row.trend_value;
+        if (value === null || value === undefined) return "muted-cell";
+        if (Number(value) > 0) return "trend-positive";
+        if (Number(value) < 0) return "trend-negative";
+        return "";
+    }
+
+    function renderPerformanceTable() {
+        if (!performanceTableScroll || !performanceSummary) return;
+        const exams = Array.isArray(performanceData?.essay_numbers) ? performanceData.essay_numbers : [];
+        const rows = Array.isArray(performanceData?.rows) ? [...performanceData.rows] : [];
+        performanceSummary.textContent = `${rows.length} alumno(s), ${exams.length} ensayo(s) detectado(s).`;
+        if (!rows.length) {
+            performanceTableScroll.innerHTML = '<div class="performance-empty">Sin resultados en SQLite. Actualiza resultados desde Ensayos para cargar esta tabla.</div>';
+            return;
+        }
+        rows.sort(comparePerformanceRows);
+        const columns = [
+            { key: "student", label: "Alumno" },
+            ...exams.map((exam) => ({ key: `essay_${exam}`, label: `Ensayo ${exam}` })),
+            { key: "latest_score", label: "Último puntaje" },
+            { key: "average", label: "Promedio" },
+            { key: "trend_value", label: "Tendencia" },
+        ];
+        const header = columns.map((column) => {
+            const indicator = performanceSort.key === column.key
+                ? `<span class="performance-sort-indicator">${performanceSort.direction === "asc" ? " asc" : " desc"}</span>`
+                : "";
+            return `<th scope="col" data-sort-key="${escapeHtml(column.key)}">${escapeHtml(column.label)}${indicator}</th>`;
+        }).join("");
+        const body = rows.map((row) => {
+            const examCells = exams.map((exam) => {
+                const value = row.scores?.[String(exam)];
+                return value === null || value === undefined
+                    ? '<td class="muted-cell">-</td>'
+                    : `<td>${escapeHtml(value)}</td>`;
+            }).join("");
+            return `
+                <tr>
+                    <td>${escapeHtml(row.student || "Estudiante protegido")}</td>
+                    ${examCells}
+                    <td>${escapeHtml(row.latest_score ?? "-")}</td>
+                    <td>${escapeHtml(row.average ?? "-")}</td>
+                    <td class="${trendClass(row)}">${escapeHtml(row.trend || "Datos insuficientes")}</td>
+                </tr>
+            `;
+        }).join("");
+        performanceTableScroll.innerHTML = `
+            <table class="performance-table">
+                <thead><tr>${header}</tr></thead>
+                <tbody>${body}</tbody>
+            </table>
+        `;
+        performanceTableScroll.querySelectorAll("th[data-sort-key]").forEach((th) => {
+            th.addEventListener("click", () => {
+                const key = th.dataset.sortKey;
+                if (performanceSort.key === key) {
+                    performanceSort.direction = performanceSort.direction === "asc" ? "desc" : "asc";
+                } else {
+                    performanceSort = { key, direction: key === "student" ? "asc" : "desc" };
+                }
+                renderPerformanceTable();
+            });
+        });
+    }
+
+    function openPerformancePage() {
+        closeAdminPage();
+        renderPerformanceTable();
+        performancePage?.classList.add("is-open");
+    }
+
+    function closePerformancePage() {
+        performancePage?.classList.remove("is-open");
+    }
 
     function renderAdminChart(series = []) {
         if (!adminChart) return;
@@ -2795,6 +3049,7 @@ def build_html_document(
     }
 
     async function openAdminPage() {
+        closePerformancePage();
         adminPage.classList.add("is-open");
         try {
             setSaveStatus("Cargando administracion", "saving");
@@ -4483,6 +4738,8 @@ def build_html_document(
     document.querySelector("#apply-sync").addEventListener("click", applyStudentSync);
     document.querySelector("#open-admin-page").addEventListener("click", openAdminPage);
     document.querySelector("#close-admin-page").addEventListener("click", closeAdminPage);
+    document.querySelector("#open-performance-page").addEventListener("click", openPerformancePage);
+    document.querySelector("#close-performance-page").addEventListener("click", closePerformancePage);
     document.querySelector("#admin-refresh-students").addEventListener("click", refreshAdminStudents);
     visibilityGrid.addEventListener("click", (event) => {
         const chip = event.target.closest(".student-chip");
@@ -4964,6 +5221,7 @@ def build_html_document(
         "__TRELLO_API_BASE__": escape_text(trello_api_base),
         "__TRELLO_API_TOKEN__": escape_text(trello_api_token),
         "__COMPONENT_STATE_JSON__": component_state_json,
+        "__PERFORMANCE_JSON__": performance_json,
         "__ICON_ADD__": icon("add"),
         "__ICON_ARROW_DOWN__": icon("arrow_down"),
         "__ICON_ARROW_LEFT__": icon("arrow_left"),
@@ -4980,6 +5238,7 @@ def build_html_document(
         "__ICON_LINK__": icon("link"),
         "__ICON_TRASH__": icon("trash"),
         "__ICON_USERS__": icon("users"),
+        "__ICON_STATS__": icon("stats"),
         "__ICON_VIEW__": icon("view"),
     }
     for token, value in replacements.items():
