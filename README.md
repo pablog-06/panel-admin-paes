@@ -1,10 +1,7 @@
 # Panel PAES
 
 Aplicacion Streamlit para administrar una fuente maestra local de material comun
-y sincronizar cambios hacia tableros PAES de alumnos. El tablero `ADMIN` ya no
-se usa como intermediario: listas, tarjetas, visibilidad, entregas y resultados
-agregados viven en SQLite local.
-
+y sincronizar cambios hacia tableros PAES de alumnos.
 ## Interfaz actual
 
 - Tablero horizontal estilo Kanban con una estetica minimalista inspirada en principios HIG: claridad, deferencia visual y controles sobrios.
