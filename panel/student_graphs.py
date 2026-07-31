@@ -1,4 +1,4 @@
-﻿from __future__ import annotations
+from __future__ import annotations
 
 import math
 import unicodedata
@@ -128,36 +128,34 @@ def render_student_graph_png(series: StudentScoreSeries) -> bytes:
     ys = [score for _, score in points]
     slope, intercept, r2, predicted = _linear_regression(points)
 
-    fig, ax = plt.subplots(figsize=(8, 5), dpi=170)
-    ax.plot(xs, predicted, linestyle="--", linewidth=1.4, color="#0A84FF", label="Regresion lineal")
-    ax.plot(xs, ys, marker="o", linewidth=2.0, markersize=5, color="#20C7BD", label="Datos")
+    fig, ax = plt.subplots(figsize=(8, 5), dpi=100)
+    ax.plot(xs, predicted, linestyle="--", linewidth=1.5, color="#1f77b4", label="Regresi\u00f3n lineal")
+    ax.plot(xs, ys, marker="o", linewidth=1.5, markersize=6, color="#ff7f0e", label="Datos")
 
-    equation = f"y = {slope:.2f}x + {intercept:.2f}"
-    r2_text = "R2 = n/a" if r2 is None else f"R2 = {r2:.3f}"
+    r2_text = "R\u00b2 = n/a" if r2 is None else f"R\u00b2 = {r2:.3f}"
     ax.text(
-        0.98,
-        0.96,
-        f"{equation}\n{r2_text}",
+        0.95,
+        0.90,
+        f"y = {slope:.2f}x + {intercept:.2f}\n{r2_text}",
         transform=ax.transAxes,
         horizontalalignment="right",
         verticalalignment="top",
-        fontsize=8,
-        color="#24384A",
-        bbox={"boxstyle": "round,pad=0.35", "facecolor": "white", "edgecolor": "#BFE7F5", "alpha": 0.86},
+        fontsize=10,
+        color="black",
     )
 
-    ax.set_title(f"Grafico de progreso - {series.student_name}", fontsize=12, weight="normal", color="#182230")
-    ax.set_xlabel("Ensayo", color="#425466")
-    ax.set_ylabel("Puntaje", color="#425466")
+    ax.set_title("Gr\u00e1fico de progreso", fontsize=14, weight="normal", color="black")
+    ax.set_xlabel("Ensayo", color="black")
+    ax.set_ylabel("Puntaje", color="black")
     ax.set_ylim(100, 1000)
     ax.set_yticks(range(100, 1001, 100))
     ax.set_xticks(xs)
-    ax.grid(True, alpha=0.26)
-    ax.legend(loc="upper left", frameon=False, fontsize=8)
+    ax.grid(True, color="#b0b0b0", linewidth=0.8, alpha=1.0)
+    ax.legend(loc="upper left", frameon=True)
     fig.tight_layout()
 
     output = BytesIO()
-    fig.savefig(output, format="png", bbox_inches="tight")
+    fig.savefig(output, format="png")
     plt.close(fig)
     return output.getvalue()
 
