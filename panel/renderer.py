@@ -2530,7 +2530,7 @@ def build_html_document(
                     <div class="admin-card-actions">
                         <button class="secondary-button" type="button" id="admin-refresh-results">__ICON_STATS__<span>Recalcular puntajes</span></button>
                     </div>
-                    <p class="admin-hint" id="admin-results-status">Lee solo la lista Ensayos y actualiza SQLite, graficos y Rendimiento.</p>
+                    <p class="admin-hint" id="admin-results-status">Lee Ensayos, actualiza SQLite y reemplaza solo el PNG de la tarjeta Grafico.</p>
                 </section>
                 <section class="admin-card admin-students-card">
                     <div class="admin-section-title">
@@ -4038,18 +4038,22 @@ def build_html_document(
             renderAdminDashboard(result.dashboard);
         }
         const imported = result.import_result;
+        const graphs = result.graph_result;
         if (adminResultsStatus && imported) {
-            adminResultsStatus.textContent = `Puntajes recalculados: ${imported.scores} puntaje(s) desde ${imported.boards} board(s). Omitidas: ${imported.skipped_cards}.`;
+            const graphText = graphs
+                ? ` Graficos: ${graphs.updated} actualizado(s), ${graphs.skipped} omitido(s), ${Array.isArray(graphs.errors) ? graphs.errors.length : 0} error(es).`
+                : "";
+            adminResultsStatus.textContent = `Puntajes recalculados: ${imported.scores} puntaje(s) desde ${imported.boards} board(s). Omitidas: ${imported.skipped_cards}.${graphText}`;
         }
-        if (adminResultsStatus && result.sync_error) {
-            adminResultsStatus.textContent = `No se pudo recalcular puntajes: ${result.sync_error}`;
+        if (adminResultsStatus && (result.sync_error || result.graph_error)) {
+            adminResultsStatus.textContent = `No se pudo completar el recalculo: ${result.sync_error || result.graph_error}`;
         }
     }
 
     async function refreshResultsPanel(force = false) {
         if (!TRELLO_MODE) return null;
         try {
-            const result = await callLocalApi("/refresh-results", { force, limit: 80, background: !force });
+            const result = await callLocalApi("/refresh-results", { force, limit: 80, background: !force, update_graphs: force });
             applyResultsRefreshResult(result);
             return result;
         } catch (error) {
@@ -4063,10 +4067,10 @@ def build_html_document(
         const button = document.querySelector("#admin-refresh-results");
         try {
             if (button) button.disabled = true;
-            if (adminResultsStatus) adminResultsStatus.textContent = "Leyendo Ensayos en Trello y actualizando SQLite...";
+            if (adminResultsStatus) adminResultsStatus.textContent = "Leyendo Ensayos, actualizando SQLite y generando graficos individuales...";
             setSaveStatus("Recalculando puntajes", "saving");
             const result = await refreshResultsPanel(true);
-            if (result?.sync_error) throw new Error(result.sync_error);
+            if (result?.sync_error || result?.graph_error) throw new Error(result.sync_error || result.graph_error);
             await refreshAuditLog();
             setSaveStatus("Puntajes actualizados");
         } catch (error) {
@@ -5292,3 +5296,4 @@ def build_html_document(
     for token, value in replacements.items():
         document = document.replace(token, value)
     return document
+

@@ -215,12 +215,24 @@ def execute_admin_action(path: str, payload: dict[str, Any] | None, config: Trel
 
     if path == "/refresh-results":
         sync_error = ""
+        graph_error = ""
         import_result = None
+        graph_result = None
+        force = bool(payload.get("force"))
+        update_graphs = bool(payload.get("update_graphs", force)) and force
         try:
-            import_result = _sync_results_if_due(force=bool(payload.get("force")))
+            import_result = _sync_results_if_due(force=force)
         except Exception as error:
             sync_error = str(error)
             write_audit_log("refresh_results", sync_error, status="error")
+        if update_graphs and not sync_error:
+            try:
+                from panel.student_graphs import update_all_student_graphs
+
+                graph_result = update_all_student_graphs(config, delay=0.15, active_only=True)
+            except Exception as error:
+                graph_error = str(error)
+                write_audit_log("refresh_graphs", graph_error, status="error")
         panel = build_results_panel()
         return {
             "panel": panel,
@@ -235,11 +247,13 @@ def execute_admin_action(path: str, payload: dict[str, Any] | None, config: Trel
                 "unknown_count": 0,
             },
             "sync_error": sync_error,
+            "graph_error": graph_error,
+            "graph_result": graph_result,
             "import_result": {
-                "boards": import_result[0],
-                "scores": import_result[1],
-                "skipped_cards": import_result[2],
-            } if import_result is not None else None,
+                "boards": import_result[0] if import_result else 0,
+                "scores": import_result[1] if import_result else 0,
+                "skipped_cards": import_result[2] if import_result else 0,
+            },
         }
 
     if path == "/audit-log":
@@ -393,3 +407,4 @@ def execute_admin_action(path: str, payload: dict[str, Any] | None, config: Trel
             return apply_student_sync_plan(config, [], max_actions=max_actions)
 
     raise TrelloReadOnlyError("Accion local no soportada.")
+
