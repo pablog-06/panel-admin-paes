@@ -11,6 +11,7 @@ from panel.results_db import (
     archive_master_card,
     archive_master_list,
     build_results_panel,
+    build_performance_table,
     create_master_list,
     hidden_student_board_ids,
     latest_exam_summary,
@@ -49,17 +50,18 @@ def _payload_text(payload: dict[str, Any], key: str, default: str = "") -> str:
     return str(payload.get(key) or default).strip()
 
 
-def _sync_results_if_due(force: bool = False) -> None:
+def _sync_results_if_due(force: bool = False) -> tuple[int, int, int] | None:
     global _RESULTS_SYNCED_AT
     now = time.time()
     if not force and now - _RESULTS_SYNCED_AT < _RESULTS_SYNC_TTL_SECONDS:
-        return
+        return None
     with _RESULTS_SYNC_LOCK:
         now = time.time()
         if not force and now - _RESULTS_SYNCED_AT < _RESULTS_SYNC_TTL_SECONDS:
-            return
-        import_scores(dry_run=False, delay=0.35, limit=None)
+            return None
+        result = import_scores(dry_run=False, delay=0.2, limit=None)
         _RESULTS_SYNCED_AT = time.time()
+        return result
 
 
 def periodic_backup_if_due() -> None:
@@ -213,12 +215,32 @@ def execute_admin_action(path: str, payload: dict[str, Any] | None, config: Trel
 
     if path == "/refresh-results":
         sync_error = ""
+        import_result = None
         try:
-            _sync_results_if_due(force=bool(payload.get("force")))
+            import_result = _sync_results_if_due(force=bool(payload.get("force")))
         except Exception as error:
             sync_error = str(error)
             write_audit_log("refresh_results", sync_error, status="error")
-        return {"panel": build_results_panel(), "sync_error": sync_error}
+        panel = build_results_panel()
+        return {
+            "panel": panel,
+            "performance_table": build_performance_table(),
+            "dashboard": {
+                "cohort": load_cohort_status(),
+                "events": admin_history_events(int(payload.get("limit") or 80)),
+                "stats": latest_exam_summary() or {},
+                "series": median_scores_by_exam(),
+                "refresh_summary": {},
+                "unknown_boards": [],
+                "unknown_count": 0,
+            },
+            "sync_error": sync_error,
+            "import_result": {
+                "boards": import_result[0],
+                "scores": import_result[1],
+                "skipped_cards": import_result[2],
+            } if import_result is not None else None,
+        }
 
     if path == "/audit-log":
         return {"events": read_audit_log(limit=int(payload.get("limit") or 40))}

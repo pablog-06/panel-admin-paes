@@ -37,7 +37,7 @@ from panel.streamlit_shell import configure_page, hide_streamlit_chrome, render_
 from panel.trello_client import TrelloConfig
 
 
-APP_VERSION = "v-etapa6-performance-1"
+APP_VERSION = "v-etapa6-results-refresh-1"
 LOCAL_API_PORT = 8771
 
 
@@ -176,11 +176,15 @@ def main() -> None:
             try:
                 if path == "/ui-state":
                     screen = str(payload.get("screen") or "").strip()
-                    if screen in {"sync", "admin", "visibility"}:
+                    if screen in {"sync", "admin", "visibility", "performance"}:
                         visual_action_results["__ui_state"] = {"screen": screen}
                     else:
                         visual_action_results.pop("__ui_state", None)
                     result = {"screen": screen or "board"}
+                    visual_action_results[path] = {"ok": True, "result": result}
+                elif path == "/refresh-results":
+                    visual_action_results.pop("/admin-dashboard", None)
+                    result = execute_admin_action(path, payload, config)
                     visual_action_results[path] = {"ok": True, "result": result}
                 elif path == "/sync-preview-students":
                     visual_action_results.pop("/sync-start-students", None)

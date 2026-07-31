@@ -2527,6 +2527,10 @@ def build_html_document(
                         <div><span>Maximo</span><strong id="admin-stat-max">--</strong><small id="admin-stat-max-student">--</small></div>
                     </div>
                     <div class="admin-chart" id="admin-chart"></div>
+                    <div class="admin-card-actions">
+                        <button class="secondary-button" type="button" id="admin-refresh-results">__ICON_STATS__<span>Recalcular puntajes</span></button>
+                    </div>
+                    <p class="admin-hint" id="admin-results-status">Lee solo la lista Ensayos y actualiza SQLite, graficos y Rendimiento.</p>
                 </section>
                 <section class="admin-card admin-students-card">
                     <div class="admin-section-title">
@@ -2751,7 +2755,7 @@ def build_html_document(
     const STORAGE_KEY = "admin-paes-board-state-v1";
     const AUDIT_STORAGE_KEY = "admin-paes-audit-events-v1";
     const defaultBoardData = __DATA_JSON__;
-    const performanceData = __PERFORMANCE_JSON__;
+    let performanceData = __PERFORMANCE_JSON__;
     let boardData = (READ_ONLY || TRELLO_MODE) ? defaultBoardData : loadBoardData(defaultBoardData);
     let pendingCloseListId = null;
     let attachedImages = [];
@@ -2782,6 +2786,7 @@ def build_html_document(
     const performancePage = document.querySelector("#performance-page");
     const performanceSummary = document.querySelector("#performance-summary");
     const performanceTableScroll = document.querySelector("#performance-table-scroll");
+    const adminResultsStatus = document.querySelector("#admin-results-status");
     const checklistsRoot = document.querySelector("#checklists");
     const editingCardId = document.querySelector("#editing-card-id");
     const optionPanels = [...document.querySelectorAll(".option-panel")];
@@ -3258,7 +3263,7 @@ def build_html_document(
             return COMPONENT_STATE["/cohort-status"] || {};
         }
         if (path === "/refresh-results") {
-            return COMPONENT_STATE["/refresh-results"] || null;
+            return COMPONENT_STATE["/refresh-results"]?.result || COMPONENT_STATE["/refresh-results"] || null;
         }
         return null;
     }
@@ -3275,6 +3280,8 @@ def build_html_document(
                 ? { screen: "sync" }
                 : path.startsWith("/admin-dashboard") || path.startsWith("/refresh-cohorts")
                     ? { screen: "admin" }
+                    : path === "/refresh-results"
+                        ? (payload?.background ? {} : { screen: "admin" })
                     : path.startsWith("/visibility-") || path === "/student-boards"
                         ? { screen: "visibility" }
                         : {};
@@ -3926,6 +3933,10 @@ def build_html_document(
         if (ranking) {
             ranking.outerHTML = renderScoreRanking(panel.ranking || [], stats.exam || "Ultimo ensayo");
         }
+        const chart = root.querySelector('[data-chart="average-series"]');
+        if (chart) {
+            chart.outerHTML = renderAverageChart(panel.median_series || []);
+        }
     }
 
     function renderScoreRanking(rows, exam) {
@@ -4016,20 +4027,54 @@ def build_html_document(
         `;
     }
 
+    function applyResultsRefreshResult(result) {
+        if (!result) return;
+        if (result.panel) updateResultsPanel(result.panel);
+        if (result.performance_table) {
+            performanceData = result.performance_table;
+            if (performancePage?.classList.contains("is-open")) renderPerformanceTable();
+        }
+        if (result.dashboard && adminPage?.classList.contains("is-open")) {
+            renderAdminDashboard(result.dashboard);
+        }
+        const imported = result.import_result;
+        if (adminResultsStatus && imported) {
+            adminResultsStatus.textContent = `Puntajes recalculados: ${imported.scores} puntaje(s) desde ${imported.boards} board(s). Omitidas: ${imported.skipped_cards}.`;
+        }
+        if (adminResultsStatus && result.sync_error) {
+            adminResultsStatus.textContent = `No se pudo recalcular puntajes: ${result.sync_error}`;
+        }
+    }
+
     async function refreshResultsPanel(force = false) {
-        if (!TRELLO_MODE) return;
+        if (!TRELLO_MODE) return null;
         try {
-            const response = await fetch(`${TRELLO_API_BASE}/refresh-results`, {
-                method: "POST",
-                headers: { "Content-Type": "application/json", "X-Admin-PAES-Token": TRELLO_API_TOKEN },
-                body: JSON.stringify({ force }),
-            });
-            const data = await response.json();
-            if (data?.ok && data.result?.panel) {
-                updateResultsPanel(data.result.panel);
-            }
+            const result = await callLocalApi("/refresh-results", { force, limit: 80, background: !force });
+            applyResultsRefreshResult(result);
+            return result;
         } catch (error) {
             console.warn("No se pudo refrescar Resultados globales.", error);
+            if (adminResultsStatus) adminResultsStatus.textContent = `No se pudo recalcular puntajes: ${error.message}`;
+            return null;
+        }
+    }
+
+    async function recalculateResults() {
+        const button = document.querySelector("#admin-refresh-results");
+        try {
+            if (button) button.disabled = true;
+            if (adminResultsStatus) adminResultsStatus.textContent = "Leyendo Ensayos en Trello y actualizando SQLite...";
+            setSaveStatus("Recalculando puntajes", "saving");
+            const result = await refreshResultsPanel(true);
+            if (result?.sync_error) throw new Error(result.sync_error);
+            await refreshAuditLog();
+            setSaveStatus("Puntajes actualizados");
+        } catch (error) {
+            setSaveStatus("Error puntajes", "error");
+            if (adminResultsStatus) adminResultsStatus.textContent = `Error al recalcular: ${error.message}`;
+            alert(error.message);
+        } finally {
+            if (button) button.disabled = false;
         }
     }
 
@@ -4741,6 +4786,7 @@ def build_html_document(
     document.querySelector("#open-performance-page").addEventListener("click", openPerformancePage);
     document.querySelector("#close-performance-page").addEventListener("click", closePerformancePage);
     document.querySelector("#admin-refresh-students").addEventListener("click", refreshAdminStudents);
+    document.querySelector("#admin-refresh-results").addEventListener("click", recalculateResults);
     visibilityGrid.addEventListener("click", (event) => {
         const chip = event.target.closest(".student-chip");
         if (!chip) return;
@@ -5095,6 +5141,8 @@ def build_html_document(
     function applyComponentStateToOpenUi() {
         if (!COMPONENT_MODE) return;
         const ui = COMPONENT_STATE.__ui_state || {};
+        const refreshedResults = COMPONENT_STATE["/refresh-results"];
+        if (refreshedResults?.ok) applyResultsRefreshResult(refreshedResults.result);
         if (ui.screen === "admin" || adminPage.classList.contains("is-open")) {
             adminPage.classList.add("is-open");
             const cachedAdmin = COMPONENT_STATE["/admin-dashboard"];
